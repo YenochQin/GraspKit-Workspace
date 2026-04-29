@@ -18,7 +18,7 @@ Start Python work from `GraspKit-Tools/`:
 
 ```bash
 cd GraspKit-Tools
-uv sync --extra dev --extra cpu
+uv sync
 uv run pytest
 ```
 
