@@ -1,0 +1,7 @@
+# Ignore everything by default. This workspace repo tracks only root-level
+# coordination files; the two subprojects keep their own Git histories.
+*
+
+!/AGENTS.md
+!/CLAUDE.md
+!/.gitignore
