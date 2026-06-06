@@ -1,14 +1,14 @@
-# GraspKit Workspace
+# graspkit Workspace
 
-This repository coordinates the GraspKit project set. It is a workspace wrapper,
+This repository coordinates the graspkit project set. It is a workspace wrapper,
 not a monorepo: the three project directories are Git submodules and keep their
 own independent histories.
 
 ## Layout
 
-- `GraspKit-Tools/` is the user-facing library and final externally released
+- `graspkit-tools/` is the user-facing library and final externally released
   project. The workspace tracks branch `2.1dev2`.
-- `GraspKit/` is the developer-focused Python library for core package
+- `graspkit/` is the developer-focused Python library for core package
   development. The workspace tracks branch `3.2dev2`.
 - `rCSFs/` is the Rust/PyO3 source project for the compiled `rcsfs` Python
   extension used by the tools pipeline. The workspace tracks branch
@@ -24,7 +24,7 @@ commit.
 Clone the full workspace with submodules:
 
 ```bash
-git clone --recurse-submodules https://github.com/YenochQin/GraspKit-Workspace.git
+git clone --recurse-submodules https://github.com/YenochQin/graspkit-Workspace.git
 ```
 
 If the repository was cloned without submodules, initialize them later:
@@ -33,7 +33,7 @@ If the repository was cloned without submodules, initialize them later:
 git submodule update --init --recursive
 ```
 
-`GraspKit` and `GraspKit-Tools` are private GitHub repositories. Users without
+`graspkit` and `graspkit-tools` are private GitHub repositories. Users without
 access can clone this public workspace, but those two submodules will fail to
 download. The public workspace exposes their repository names, URLs, and pinned
 commit hashes, but not their source contents.
@@ -43,9 +43,9 @@ commit hashes, but not their source contents.
 To move one submodule to the latest commit on its configured branch:
 
 ```bash
-git submodule update --remote GraspKit-Tools
-git add GraspKit-Tools
-git commit -m "workspace: update GraspKit-Tools submodule"
+git submodule update --remote graspkit-tools
+git add graspkit-tools
+git commit -m "workspace: update graspkit-tools submodule"
 ```
 
 To update all configured submodules:
@@ -60,16 +60,16 @@ submodule repositories themselves are in the desired state.
 
 ## Environment
 
-Start Python work from `GraspKit-Tools/`:
+Start Python work from `graspkit-tools/`:
 
 ```bash
-cd GraspKit-Tools
+cd graspkit-tools
 uv sync
 uv run pytest
 ```
 
-`GraspKit-Tools` uses the local `GraspKit` package as an editable dependency.
-Changes in `GraspKit/src/` are picked up through the Tools environment after the
+`graspkit-tools` uses the local `graspkit` package as an editable dependency.
+Changes in `graspkit/src/` are picked up through the Tools environment after the
 submodules have been initialized.
 
 ## Tracked Files
@@ -82,6 +82,6 @@ gitlinks:
 - `CLAUDE.md`
 - `.gitignore`
 - `.gitmodules`
-- `GraspKit-Tools`
-- `GraspKit`
+- `graspkit-tools`
+- `graspkit`
 - `rCSFs`
