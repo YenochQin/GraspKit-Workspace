@@ -1,0 +1,12 @@
+[submodule "GraspKit-Tools"]
+	path = GraspKit-Tools
+	url = https://github.com/YenochQin/graspkit-tools.git
+	branch = 2.1dev2
+[submodule "GraspKit"]
+	path = GraspKit
+	url = https://github.com/YenochQin/graspkit.git
+	branch = 3.2dev2
+[submodule "rCSFs"]
+	path = rCSFs
+	url = https://github.com/YenochQin/rCSFs.git
+	branch = 1.2.2-beta1

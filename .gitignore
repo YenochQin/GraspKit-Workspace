@@ -6,3 +6,7 @@
 !/CLAUDE.md
 !/README.md
 !/.gitignore
+!/.gitmodules
+!/GraspKit-Tools
+!/GraspKit
+!/rCSFs
