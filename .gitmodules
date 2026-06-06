@@ -1,11 +1,11 @@
 [submodule "graspkit-tools"]
 	path = graspkit-tools
 	url = https://github.com/YenochQin/graspkit-tools.git
-	branch = 2.1dev2
+	branch = 2.2dev1
 [submodule "graspkit"]
 	path = graspkit
 	url = https://github.com/YenochQin/graspkit.git
-	branch = 3.2dev2
+	branch = 3.3dev1
 [submodule "rCSFs"]
 	path = rCSFs
 	url = https://github.com/YenochQin/rCSFs.git
