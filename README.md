@@ -72,6 +72,13 @@ uv run pytest
 Changes in `graspkit/src/` are picked up through the Tools environment after the
 submodules have been initialized.
 
+When working on Windows, or on any platform where building Rust/C extensions
+requires an external linker toolchain, initialize that compiler/linker
+environment before running `uv sync` or build commands that touch `rCSFs/`. For
+example, on this Windows machine the nushell config defines an `msvc` function;
+run `msvc` first so the shell can find MSVC tools such as `link.exe`, then run
+`uv sync`, `maturin build --release`, or related compile steps.
+
 ## Tracked Files
 
 This top-level repository tracks shared coordination files and submodule
