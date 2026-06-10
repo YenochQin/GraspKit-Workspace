@@ -10,7 +10,7 @@ The top-level `graspkit-Workspace` repository records coordination files and the
 ## Build, Test, and Development Commands
 Start the Python environment from `graspkit-tools/`; its `uv` environment links to local workspace dependencies and installs the wheel-backed `rcsfs` extension. Run most commands from `graspkit-tools/` unless building or checking `graspkit/` or `rCSFs/` directly.
 
-- `git clone --recurse-submodules https://github.com/YenochQin/graspkit-Workspace.git`: clone the workspace and all accessible submodules.
+- `git clone --recurse-submodules https://github.com/YenochQin/graspkit-Workspace.git GraspKit-Workspace`: clone the workspace and all accessible submodules.
 - `git submodule update --init --recursive`: initialize submodules after a normal clone.
 - `git submodule status`: show the pinned submodule commits.
 - `git submodule update --remote <path>`: advance a submodule to the latest commit on its configured branch, then commit the changed gitlink in the parent repository.

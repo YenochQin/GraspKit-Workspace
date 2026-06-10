@@ -24,7 +24,7 @@ commit.
 Clone the full workspace with submodules:
 
 ```bash
-git clone --recurse-submodules https://github.com/YenochQin/graspkit-Workspace.git
+git clone --recurse-submodules https://github.com/YenochQin/graspkit-Workspace.git GraspKit-Workspace
 ```
 
 If the repository was cloned without submodules, initialize them later:
