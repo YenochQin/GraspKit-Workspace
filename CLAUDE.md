@@ -8,9 +8,9 @@ This directory is a workspace holding three paired repositories that are develop
 
 - **`graspkit/`** — the **internal development library** (`grasp-kit`, currently `3.2.dev2`). This is where developers write and modify the core APIs: GRASP2018 output processing, CSF processing, ML-driven CSF selection, and plotting. **Not published as a standalone product** — it is consumed only as an editable dependency of graspkit-tools. See `graspkit/CLAUDE.md` and `graspkit/AGENTS.md`.
   - Source is split across four `src/` packages built into one wheel: `graspkit/` (main: `data_IO`, `CSFs_processor`, `grasp_data_extractor`, `ml_module`, `utils`), `graspkit_config/` (Pydantic config models), `graspkit_ml/`, `graspkit_plot/`.
-- **`rCSFs/`** — the **internal Rust/Python extension** providing high-throughput CSF→Parquet conversion and descriptor generation. Compiled module name `_rcsfs`, public Python package `rcsfs`. Built with maturin/PyO3, Rust edition 2024, Python 3.14 only. Like graspkit, **not published standalone** — consumed by graspkit-tools via the prebuilt wheels under `graspkit-tools/package/rcsfs/`. See `rCSFs/CLAUDE.md` and `rCSFs/AGENTS.md`.
+- **`rCSFs/`** — the **internal Rust/Python extension** providing high-throughput CSF→Parquet conversion and descriptor generation. Compiled module name `_rcsfs`, public Python package `rcsfs`. Built with maturin/PyO3, Rust edition 2024, Python 3.14 only. Like graspkit, **not published standalone** — consumed by graspkit-tools as a path dependency via `[tool.uv.sources]`. See `rCSFs/CLAUDE.md` and `rCSFs/AGENTS.md`.
 - **`graspkit-tools/`** — the **end-user / publicly released product**. Bundles pipeline scripts, configuration UIs, and SLURM orchestration on top of `grasp-kit` and `rcsfs`. This is what external users install and run; treat its CLI/config surface as the public contract. See `graspkit-tools/CLAUDE.md` and `graspkit-tools/AGENTS.md`.
-  - Entry points: `ml_CSFs_selection_scripts/` (training, config loader, run scripts, Streamlit config app under `initialization_tools/config_app/`), `pyscript/` (analysis/plotting), `scripts/` (shell helpers), and `package/rcsfs/` (prebuilt `rcsfs` wheels for Linux x86_64 and macOS arm64, cp314).
+  - Entry points: `ml_CSFs_selection_scripts/` (training, config loader, run scripts, Streamlit config app under `ml_CSFs_selection_scripts/initialization_tools/config_app/`), `pyscript/` (analysis/plotting), `scripts/` (shell helpers).
 
 ## Python Environment
 
@@ -32,18 +32,17 @@ On Windows, or on any platform where Rust/C extension builds need an external co
 
 ## Cross-Repo Coupling
 
-`graspkit-tools/pyproject.toml` declares `grasp-kit` as an **editable local dependency** at `../graspkit` (lowercase) via `[tool.uv.sources]`, and pulls `rcsfs` wheels from `package/rcsfs/` via `[tool.uv] find-links`. Implications:
+`graspkit-tools/pyproject.toml` declares `grasp-kit` as an **editable local dependency** at `../graspkit` via `[tool.uv.sources]`, and `rcsfs` as a **path dependency** at `../rCSFs`. Implications:
 
 - The repos must sit side-by-side under this workspace directory, and the Tools repo expects the Kit repo at `../graspkit`. The actual directory is named `graspkit` (CamelCase) — this resolves on case-insensitive filesystems (default macOS APFS) but **will break on case-sensitive Linux**. If running into a missing-path error from `uv sync` inside `graspkit-tools/`, symlink or rename so a lowercase `graspkit` path exists. The same applies to `rCSFs/` if any tooling references it as `rcsfs`.
 - Editing `graspkit/src/...` is immediately visible to `graspkit-tools` (no rebuild needed) once `uv sync` has been run in Tools.
-- **`rcsfs` is consumed as a prebuilt wheel, not as an editable source dep.** The source under `rCSFs/` is the upstream of the wheels in `graspkit-tools/package/rcsfs/`. Editing Rust or Python in `rCSFs/` does **not** propagate to the Tools venv until you rebuild and drop a fresh wheel into that directory:
+- **`rcsfs` is a path dependency** pointing at `../rCSFs`. Editing Rust code in `rCSFs/` requires a rebuild before changes are visible in the Tools venv:
   ```bash
   cd rCSFs
   maturin build --release        # produces dist/rcsfs-<ver>-cp314-...whl
-  cp dist/rcsfs-<ver>-cp314-*.whl ../graspkit-tools/package/rcsfs/
-  cd ../graspkit-tools && uv sync   # pick up the new wheel
+  cd ../graspkit-tools && uv sync   # pick up the rebuilt wheel
   ```
-  For tight iteration on `rcsfs` itself, work inside `rCSFs/` with its pixi/maturin develop loop (`pixi shell && maturin develop`), then ship a wheel only once changes are stable.
+  For tight iteration on `rcsfs` itself, work inside `rCSFs/` with its maturin develop loop (`maturin develop`), then rebuild only once changes are stable.
 - Both projects require Python ≥ 3.14 and pin `torch==2.10.0` / `torchvision==0.25.0` via `cpu` / `gpu` extras. The `gpu` extra routes through the official PyTorch CUDA index; `cpu` resolves via the configured Tsinghua/Aliyun mirrors. On macOS the GPU extra is marker-disabled in Tools.
 
 ## Working Across Both Repos
@@ -55,6 +54,5 @@ The typical end-to-end flow (calculation → descriptors → ML training → CSF
 ## External Dependencies (Not in This Workspace)
 
 - **GRASP2018** — Fortran package providing `rangular_mpi`, `rmcdhf`, `rci`, `jj2lsj`, `rlevels`, etc. Must be on `PATH`. Source: https://github.com/compas/grasp.
-- **CSFs_2_descripors** — provides the `csf_descriptor` binary used to turn CSF files into ML features. Source: https://github.com/YenochQin/CSFs_2_descripors.
 
-Neither is vendored here; both must be installed and exposed via `PATH` (and `GRASP_PATH` / `CSFS_DESCRIPTORS_PATH` env vars) before the pipeline will run end-to-end.
+GRASP2018 must be installed and exposed via `PATH` (and `GRASP_PATH` env var) before the pipeline will run end-to-end.
