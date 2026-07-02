@@ -28,7 +28,7 @@ On CUDA hosts that need GPU PyTorch wheels, use `uv sync --no-group cpu --extra 
 
 Edits inside `graspkit/src/...` are picked up immediately by this environment because of the editable install — no reinstall needed.
 
-On Windows, or on any platform where Rust/C extension builds need an external compiler/linker environment, initialize that environment before `uv sync` or any compile step that touches `rCSFs/`. For example, this Windows machine uses nushell with an `msvc` function in the shell config; run `msvc` first so the shell can find MSVC tools such as `link.exe`, then run `uv sync`, `maturin build --release`, or related build commands.
+On Windows, or on any platform where Rust/C extension builds need an external compiler/linker environment, initialize that environment before `uv sync` or any compile step that touches `rCSFs/`. For example, this Windows machine uses nushell with an `msvc` function in the shell config; run `msvc` first so the shell can find MSVC tools such as `link.exe`, then run `uv sync`, `uv run maturin build --release`, or related build commands from `rCSFs/`.
 
 ## Cross-Repo Coupling
 
@@ -39,10 +39,10 @@ On Windows, or on any platform where Rust/C extension builds need an external co
 - **`rcsfs` is a path dependency** pointing at `../rCSFs`. Editing Rust code in `rCSFs/` requires a rebuild before changes are visible in the Tools venv:
   ```bash
   cd rCSFs
-  maturin build --release        # produces dist/rcsfs-<ver>-cp314-...whl
+  uv run maturin build --release # produces dist/rcsfs-<ver>-cp314-...whl
   cd ../graspkit-tools && uv sync   # pick up the rebuilt wheel
   ```
-  For tight iteration on `rcsfs` itself, work inside `rCSFs/` with its maturin develop loop (`maturin develop`), then rebuild only once changes are stable.
+  For tight iteration on `rcsfs` itself, work inside `rCSFs/` with its uv-managed maturin develop loop (`uv run maturin develop`), then rebuild only once changes are stable.
 - Both projects require Python ≥ 3.14 and pin `torch==2.10.0` / `torchvision==0.25.0` via `cpu` / `gpu` extras. The `gpu` extra routes through the official PyTorch CUDA index; `cpu` resolves via the configured Tsinghua/Aliyun mirrors. On macOS the GPU extra is marker-disabled in Tools.
 
 ## Working Across Both Repos

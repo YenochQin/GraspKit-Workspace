@@ -22,7 +22,7 @@ Use `uv run <cmd>` instead of activation when convenient. On CUDA hosts that nee
 
 When debugging `graspkit/` or `graspkit-tools/`, use the `uv` environment inside `graspkit-tools/`. Edits under `graspkit/src/...` are picked up immediately because of the editable install. When debugging `rCSFs/`, use the `uv` environment inside `rCSFs/`, because that repository owns the Rust/PyO3 extension build and local extension test loop.
 
-On Windows, or on any platform where Rust/C extension builds need an external compiler/linker environment, initialize that environment before `uv sync` or any compile step that touches `rCSFs/`. For example, this Windows machine uses nushell with an `msvc` function in the shell config; run `msvc` first so the shell can find MSVC tools such as `link.exe`, then run `uv sync`, `maturin build --release`, or related build commands.
+On Windows, or on any platform where Rust/C extension builds need an external compiler/linker environment, initialize that environment before `uv sync` or any compile step that touches `rCSFs/`. For example, this Windows machine uses nushell with an `msvc` function in the shell config; run `msvc` first so the shell can find MSVC tools such as `link.exe`, then run `uv sync`, `uv run maturin build --release`, or related build commands from `rCSFs/`.
 
 - `git clone --recurse-submodules https://github.com/YenochQin/graspkit-Workspace.git GraspKit-Workspace`: clone the workspace and all accessible submodules.
 - `git submodule update --init --recursive`: initialize submodules after a normal clone.
@@ -33,7 +33,7 @@ On Windows, or on any platform where Rust/C extension builds need an external co
 - `uv run mypy ../graspkit/src` from `graspkit-tools/`: type-check the developer package.
 - `uv run mypy ml_CSFs_selection_scripts pyscript` in `graspkit-tools/`: type-check tool code.
 - `uv run python -m build` or `python build_package.py --clean` in `graspkit/`: build package artifacts.
-- `maturin build --release` in `rCSFs/`: build platform wheels before copying or resolving them into the Tools environment.
+- `uv run maturin build --release` in `rCSFs/`: build platform wheels before copying or resolving them into the Tools environment. `maturin` is installed in the uv-managed Python environment; use `uv run` unless `.venv` is already activated.
 
 ## Cross-Repo Coupling
 `graspkit-tools/pyproject.toml` declares `grasp-kit` as an editable local dependency at `../graspkit` and `rcsfs` as a path dependency at `../rCSFs` via `[tool.uv.sources]`.
@@ -43,10 +43,10 @@ On Windows, or on any platform where Rust/C extension builds need an external co
 - Editing Rust code in `rCSFs/` requires rebuilding before changes are visible in the Tools venv:
   ```bash
   cd rCSFs
-  maturin build --release
+  uv run maturin build --release
   cd ../graspkit-tools && uv sync
   ```
-- For tight iteration on `rcsfs` itself, work inside `rCSFs/` with `maturin develop`, then build a release wheel once changes are stable.
+- For tight iteration on `rcsfs` itself, work inside `rCSFs/` with `uv run maturin develop`, then build a release wheel once changes are stable.
 - Both Python projects require Python >= 3.14 and pin `torch==2.10.0` / `torchvision==0.25.0` through CPU/GPU extras. The GPU extra uses the official PyTorch CUDA index; the CPU environment resolves through the configured Tsinghua/Aliyun mirrors. On macOS the GPU extra is marker-disabled in Tools.
 
 When a change touches both library and pipeline, develop API/algorithm changes in `graspkit/`, Rust extension changes in `rCSFs/`, and orchestration/config changes in `graspkit-tools/`. There is no top-level build spanning all three projects. Each repository has its own `pyproject.toml`, lockfile, lint/type config, tests, and local `.venv`; day-to-day pipeline work uses the `graspkit-tools` venv, while per-repo venvs are for that repository's own tests.

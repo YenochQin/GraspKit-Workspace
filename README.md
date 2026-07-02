@@ -77,7 +77,8 @@ requires an external linker toolchain, initialize that compiler/linker
 environment before running `uv sync` or build commands that touch `rCSFs/`. For
 example, on this Windows machine the nushell config defines an `msvc` function;
 run `msvc` first so the shell can find MSVC tools such as `link.exe`, then run
-`uv sync`, `maturin build --release`, or related compile steps.
+`uv sync`, `uv run maturin build --release`, or related compile steps from
+`rCSFs/`.
 
 ## Tracked Files
 
