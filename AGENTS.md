@@ -22,6 +22,8 @@ Use `uv run <cmd>` instead of activation when convenient. On CUDA hosts that nee
 
 When debugging `graspkit/` or `graspkit-tools/`, use the `uv` environment inside `graspkit-tools/`. Edits under `graspkit/src/...` are picked up immediately because of the editable install. When debugging `rCSFs/`, use the `uv` environment inside `rCSFs/`, because that repository owns the Rust/PyO3 extension build and local extension test loop.
 
+For Rust tests inside `rCSFs/`, run `uv run cargo test` rather than bare `cargo test`. PyO3 should link against the uv-managed Python 3.14 runtime; bare Cargo may discover a system Python such as Xcode's Python 3.9 on macOS and fail at link time with `library 'python3.9' not found`.
+
 On Windows, or on any platform where Rust/C extension builds need an external compiler/linker environment, initialize that environment before `uv sync` or any compile step that touches `rCSFs/`. For example, this Windows machine uses nushell with an `msvc` function in the shell config; run `msvc` first so the shell can find MSVC tools such as `link.exe`, then run `uv sync`, `uv run maturin build --release`, or related build commands from `rCSFs/`.
 
 - `git clone --recurse-submodules https://github.com/YenochQin/graspkit-Workspace.git GraspKit-Workspace`: clone the workspace and all accessible submodules.
