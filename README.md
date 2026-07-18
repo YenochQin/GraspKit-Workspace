@@ -33,6 +33,31 @@ If the repository was cloned without submodules, initialize them later:
 git submodule update --init --recursive
 ```
 
+### Authenticating with SSH
+
+The clone command above and the submodule URLs recorded in `.gitmodules` use
+HTTPS, so `--recurse-submodules` will prompt for a GitHub username and
+password when it reaches the private `graspkit` and `graspkit-tools`
+submodules. Users who authenticate with an SSH key can configure Git once to
+rewrite every GitHub HTTPS URL to SSH:
+
+```bash
+git config --global url."git@github.com:".insteadOf "https://github.com/"
+```
+
+After this one-time configuration, `git clone`, `git submodule update
+--init --recursive`, and `git submodule update --remote` all follow SSH for
+the public workspace and the private submodules alike, so no username or
+password is ever prompted. `.gitmodules` itself stays on HTTPS, so collaborators
+without an SSH key are unaffected.
+
+To scope the rewrite to this workspace only, run the same command inside the
+repository without `--global`. To verify it is active:
+
+```bash
+git config --get-regexp '^url\.'
+```
+
 `graspkit` and `graspkit-tools` are private GitHub repositories. Users without
 access can clone this public workspace, but those two submodules will fail to
 download. The public workspace exposes their repository names, URLs, and pinned
