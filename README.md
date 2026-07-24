@@ -1,7 +1,7 @@
 # graspkit Workspace
 
 This repository coordinates the graspkit project set. It is a workspace wrapper,
-not a monorepo: the three project directories are Git submodules and keep their
+not a monorepo: the four project directories are Git submodules and keep their
 own independent histories.
 
 ## Layout
@@ -13,6 +13,9 @@ own independent histories.
 - `rCSFs/` is the Rust/PyO3 source project for the compiled `rcsfs` Python
   extension used by the tools pipeline. The workspace tracks branch
   `1.2.2-beta1`.
+- `nist_data/` is the independent `nist-data` Python package for reading and
+  normalizing NIST ASD exports. `graspkit-tools` consumes it as an editable
+  path dependency, while `grasp-kit` remains independent of NIST-specific I/O.
 
 The top-level repository records the exact submodule commits used together.
 Changes inside a submodule must be committed and pushed in that submodule first,
@@ -37,7 +40,8 @@ git submodule update --init --recursive
 
 The clone command above and the submodule URLs recorded in `.gitmodules` use
 HTTPS, so `--recurse-submodules` will prompt for a GitHub username and
-password when it reaches the private `graspkit` and `graspkit-tools`
+password when it reaches the private `graspkit`, `graspkit-tools`, and
+`nist-data`
 submodules. Users who authenticate with an SSH key can configure Git once to
 rewrite every GitHub HTTPS URL to SSH:
 
@@ -58,10 +62,10 @@ repository without `--global`. To verify it is active:
 git config --get-regexp '^url\.'
 ```
 
-`graspkit` and `graspkit-tools` are private GitHub repositories. Users without
-access can clone this public workspace, but those two submodules will fail to
-download. The public workspace exposes their repository names, URLs, and pinned
-commit hashes, but not their source contents.
+`graspkit`, `graspkit-tools`, and `nist-data` are private GitHub repositories.
+Users without access can clone this public workspace, but those submodules will
+fail to download. The public workspace exposes their repository names, URLs,
+and pinned commit hashes, but not their source contents.
 
 ## Updating Submodules
 
@@ -94,8 +98,9 @@ uv run pytest
 ```
 
 `graspkit-tools` uses the local `graspkit` package as an editable dependency.
-Changes in `graspkit/src/` are picked up through the Tools environment after the
-submodules have been initialized.
+It also uses `nist-data` editable from `../nist_data`. Changes in either package
+are picked up through the Tools environment after the submodules have been
+initialized.
 
 When working on Windows, or on any platform where building Rust/C extensions
 requires an external linker toolchain, initialize that compiler/linker
@@ -118,3 +123,4 @@ gitlinks:
 - `graspkit-tools`
 - `graspkit`
 - `rCSFs`
+- `nist_data`

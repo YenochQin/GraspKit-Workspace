@@ -4,13 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Workspace Layout
 
-This directory is a workspace holding three paired repositories that are developed together. Each subproject has its own `CLAUDE.md` with detailed commands and architecture — read it before working inside that subproject.
+This directory is a workspace holding four paired repositories that are developed together. Each subproject has its own `CLAUDE.md` with detailed commands and architecture — read it before working inside that subproject.
 
 - **`graspkit/`** — the **internal development library** (`grasp-kit`, currently `3.2.dev2`). This is where developers write and modify the core APIs: GRASP2018 output processing, CSF processing, ML-driven CSF selection, and plotting. **Not published as a standalone product** — it is consumed only as an editable dependency of graspkit-tools. See `graspkit/CLAUDE.md` and `graspkit/AGENTS.md`.
   - Source is split across four `src/` packages built into one wheel: `graspkit/` (main: `data_IO`, `CSFs_processor`, `grasp_data_extractor`, `ml_module`, `utils`), `graspkit_config/` (Pydantic config models), `graspkit_ml/`, `graspkit_plot/`.
 - **`rCSFs/`** — the **internal Rust/Python extension** providing high-throughput CSF→Parquet conversion and descriptor generation. Compiled module name `_rcsfs`, public Python package `rcsfs`. Built with maturin/PyO3, Rust edition 2024, Python 3.14 only. Like graspkit, **not published standalone** — consumed by graspkit-tools as a path dependency via `[tool.uv.sources]`. See `rCSFs/CLAUDE.md` and `rCSFs/AGENTS.md`.
 - **`graspkit-tools/`** — the **end-user / publicly released product**. Bundles pipeline scripts, configuration UIs, and SLURM orchestration on top of `grasp-kit` and `rcsfs`. This is what external users install and run; treat its CLI/config surface as the public contract. See `graspkit-tools/CLAUDE.md` and `graspkit-tools/AGENTS.md`.
   - Entry points: `ml_CSFs_selection_scripts/` (training, config loader, run scripts, Streamlit config app under `ml_CSFs_selection_scripts/initialization_tools/config_app/`), `pyscript/` (analysis/plotting), `scripts/` (shell helpers).
+- **`nist_data/`** — the independent **NIST ASD data package** (`nist-data`). It reads and normalizes exported levels data and may later own online query/cache behavior. `graspkit-tools` consumes it editable from `../nist_data`; `graspkit` remains source-agnostic. See `nist_data/CLAUDE.md` and `nist_data/AGENTS.md`.
 
 ## Python Environment
 
@@ -32,10 +33,11 @@ On Windows, or on any platform where Rust/C extension builds need an external co
 
 ## Cross-Repo Coupling
 
-`graspkit-tools/pyproject.toml` declares `grasp-kit` as an **editable local dependency** at `../graspkit` via `[tool.uv.sources]`, and `rcsfs` as a **path dependency** at `../rCSFs`. Implications:
+`graspkit-tools/pyproject.toml` declares `grasp-kit` and `nist-data` as **editable local dependencies** at `../graspkit` and `../nist_data` via `[tool.uv.sources]`, and `rcsfs` as a **path dependency** at `../rCSFs`. Implications:
 
 - The repos must sit side-by-side under this workspace directory, and the Tools repo expects the Kit repo at `../graspkit`. The actual directory is named `graspkit` (CamelCase) — this resolves on case-insensitive filesystems (default macOS APFS) but **will break on case-sensitive Linux**. If running into a missing-path error from `uv sync` inside `graspkit-tools/`, symlink or rename so a lowercase `graspkit` path exists. The same applies to `rCSFs/` if any tooling references it as `rcsfs`.
 - Editing `graspkit/src/...` is immediately visible to `graspkit-tools` (no rebuild needed) once `uv sync` has been run in Tools.
+- Editing `nist_data/src/...` is immediately visible to `graspkit-tools` (no rebuild needed) once `uv sync` has been run in Tools.
 - **`rcsfs` is a path dependency** pointing at `../rCSFs`. Editing Rust code in `rCSFs/` requires a rebuild before changes are visible in the Tools venv:
   ```bash
   cd rCSFs
@@ -47,7 +49,7 @@ On Windows, or on any platform where Rust/C extension builds need an external co
 
 ## Working Across Both Repos
 
-When a change touches both library and pipeline (common case), develop inside `graspkit/` for API/algorithm changes, inside `rCSFs/` for Rust extension changes, and inside `graspkit-tools/` for orchestration/config changes — there is no top-level build that spans them. Each repo has its own `pyproject.toml`, lockfile, lint/type config, and tests, and ships its own `.venv` for isolated unit testing. **Day-to-day pipeline work uses the graspkit-tools venv** (see Python Environment above); use the per-repo venv only when iterating on that repo's own tests.
+When a change touches multiple projects, develop inside `graspkit/` for API/algorithm changes, inside `rCSFs/` for Rust extension changes, inside `nist_data/` for NIST ASD parsing, and inside `graspkit-tools/` for orchestration/config integration — there is no top-level build that spans them. Each repo has its own `pyproject.toml`, lockfile, lint/type config, and tests, and ships its own `.venv` for isolated unit testing. **Day-to-day pipeline work uses the graspkit-tools venv** (see Python Environment above); use the per-repo venv only when iterating on that repo's own tests.
 
 The typical end-to-end flow (calculation → descriptors → ML training → CSF selection → re-validation) is orchestrated from `graspkit-tools/ml_CSFs_selection_scripts/`, configured via `config.toml` (validate with `uv run python ml_CSFs_selection_scripts/csfs_ml_choosing_config_load.py validate -f config.toml`), and submitted via `run_script/`. The `train` step imports the ML modules from `graspkit` — so failures there often need fixes in `graspkit/src/graspkit/ml_module/`. The descriptor-generation step calls into `rcsfs` — failures involving CSF parsing, Parquet I/O, or descriptor normalization typically need fixes in `rCSFs/src/` (Rust) or `rCSFs/rcsfs/` (Python wrapper).
 

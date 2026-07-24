@@ -10,3 +10,7 @@
 	path = rCSFs
 	url = https://github.com/YenochQin/rCSFs.git
 	branch = 1.2.2-beta1
+[submodule "nist_data"]
+	path = nist_data
+	url = https://github.com/YenochQin/nist-data.git
+	branch = main
