@@ -33,8 +33,8 @@ On Windows, or on any platform where Rust/C extension builds need an external co
 - `git submodule update --remote <path>`: advance a submodule to the latest commit on its configured branch, then commit the changed gitlink in the parent repository.
 - `uv run pytest`: run the active project test suite.
 - `uv run ruff check .`: run lint checks.
-- `uv run mypy ../graspkit/src` from `graspkit-tools/`: type-check the developer package.
-- `uv run mypy ml_CSFs_selection_scripts pyscript` in `graspkit-tools/`: type-check tool code.
+- `uv run basedpyright ../graspkit/src` from `graspkit-tools/`: type-check the developer package.
+- `uv run basedpyright ml_CSFs_selection_scripts pyscript` in `graspkit-tools/`: type-check tool code.
 - `uv run python -m build` or `python build_package.py --clean` in `graspkit/`: build package artifacts.
 - `uv run maturin build --release` in `rCSFs/`: build platform wheels before copying or resolving them into the Tools environment. `maturin` is installed in the uv-managed Python environment; use `uv run` unless `.venv` is already activated.
 
