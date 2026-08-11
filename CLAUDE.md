@@ -53,6 +53,15 @@ When a change touches multiple projects, develop inside `graspkit/` for API/algo
 
 The typical end-to-end flow (calculation → descriptors → ML training → CSF selection → re-validation) is orchestrated from `graspkit-tools/ml_CSFs_selection_scripts/`, configured via `config.toml` (validate with `uv run python ml_CSFs_selection_scripts/csfs_ml_choosing_config_load.py validate -f config.toml`), and submitted via `run_script/`. The `train` step imports the ML modules from `graspkit` — so failures there often need fixes in `graspkit/src/graspkit/ml_module/`. The descriptor-generation step calls into `rcsfs` — failures involving CSF parsing, Parquet I/O, or descriptor normalization typically need fixes in `rCSFs/src/` (Rust) or `rCSFs/rcsfs/` (Python wrapper).
 
+## Git Commit Workflow
+
+The workspace and its submodules require separate commits. Whenever the user asks to commit completed modifications, interpret that request as including both layers unless the user explicitly restricts the scope:
+
+1. Commit the relevant source changes inside each modified submodule. Each submodule receives its own commit.
+2. Return to the parent workspace and commit the resulting submodule gitlink changes in a separate parent commit, together with only any intentional parent coordination-file changes.
+3. Do not report the requested commit as complete while updated submodule gitlinks remain uncommitted in the parent repository.
+4. Verify `git status` in every modified submodule and in the parent workspace, and report any remaining changes.
+
 ## External Dependencies (Not in This Workspace)
 
 - **GRASP2018** — Fortran package providing `rangular_mpi`, `rmcdhf`, `rci`, `jj2lsj`, `rlevels`, etc. Must be on `PATH`. Source: https://github.com/compas/grasp.

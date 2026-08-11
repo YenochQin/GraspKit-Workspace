@@ -68,6 +68,8 @@ Git history includes short subjects such as `update ...`, `bug fix`, and scoped 
 
 Keep parent and submodule commits separate. A parent workspace commit should only update coordination files such as `README.md`, `AGENTS.md`, `.gitmodules`, or submodule gitlink entries. A submodule code commit belongs in that submodule repository.
 
+Whenever the user asks to commit completed modifications, treat the request as covering both repository layers unless they explicitly limit its scope. First commit the relevant changes inside every modified submodule, with a separate commit in each submodule. Then return to the parent workspace and create a separate parent commit containing the resulting submodule gitlink updates (plus any intentional parent coordination-file changes). Do not leave updated gitlinks uncommitted after declaring the requested commit complete. Finally, verify `git status` in every modified submodule and in the parent workspace, and report any remaining changes.
+
 ## Security & Configuration Tips
 Do not commit credentials, cluster paths, local datasets, generated calculation outputs, virtual environments, or copied private submodule source. Treat TOML config and shell-script generation inputs as untrusted; validate paths and avoid unsafe shell interpolation.
 
