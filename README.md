@@ -7,12 +7,11 @@ own independent histories.
 ## Layout
 
 - `graspkit-tools/` is the user-facing library and final externally released
-  project. The workspace tracks branch `2.1dev2`.
+  project (`2.3.dev1`).
 - `graspkit/` is the developer-focused Python library for core package
-  development. The workspace tracks branch `3.2dev2`.
+  development (`3.4.dev1`).
 - `rCSFs/` is the Rust/PyO3 source project for the compiled `rcsfs` Python
-  extension used by the tools pipeline. The workspace tracks branch
-  `1.2.2-beta1`.
+  extension used by the tools pipeline (`1.3.1`).
 - `nist_data/` is the independent `nist-data` Python package for reading and
   normalizing NIST ASD exports. `graspkit-tools` consumes it as an editable
   path dependency, while `grasp-kit` remains independent of NIST-specific I/O.
@@ -36,14 +35,26 @@ If the repository was cloned without submodules, initialize them later:
 git submodule update --init --recursive
 ```
 
+If one submodule directory is accidentally deleted, restore it at the exact
+commit pinned by the workspace. For example:
+
+```bash
+git submodule update --init --recursive nist_data
+```
+
+Do not replace this command with a standalone `git clone`: a normal clone checks
+out the remote repository's default branch instead of the commit recorded by
+the workspace. After restoration, `git status` should no longer report the
+submodule as deleted.
+
 ### Authenticating with SSH
 
 The clone command above and the submodule URLs recorded in `.gitmodules` use
-HTTPS, so `--recurse-submodules` will prompt for a GitHub username and
-password when it reaches the private `graspkit`, `graspkit-tools`, and
-`nist-data`
-submodules. Users who authenticate with an SSH key can configure Git once to
-rewrite every GitHub HTTPS URL to SSH:
+HTTPS. Accessing the private `graspkit`, `graspkit-tools`, and `nist-data`
+submodules therefore requires a GitHub credential helper or a personal access
+token; GitHub account passwords are not accepted for Git operations. Users who
+authenticate with an SSH key can configure Git once to rewrite every GitHub
+HTTPS URL to SSH:
 
 ```bash
 git config --global url."git@github.com:".insteadOf "https://github.com/"
@@ -51,9 +62,8 @@ git config --global url."git@github.com:".insteadOf "https://github.com/"
 
 After this one-time configuration, `git clone`, `git submodule update
 --init --recursive`, and `git submodule update --remote` all follow SSH for
-the public workspace and the private submodules alike, so no username or
-password is ever prompted. `.gitmodules` itself stays on HTTPS, so collaborators
-without an SSH key are unaffected.
+the public workspace and the private submodules alike. `.gitmodules` itself
+stays on HTTPS, so collaborators without an SSH key are unaffected.
 
 To scope the rewrite to this workspace only, run the same command inside the
 repository without `--global`. To verify it is active:
