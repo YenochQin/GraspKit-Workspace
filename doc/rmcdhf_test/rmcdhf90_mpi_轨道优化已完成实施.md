@@ -9,8 +9,8 @@
 ```
 
 最新核查日期为 2026-08-25；核查时 `rmcdhf_test` 位于分支
-`0.1.0-test1`，本次测试驱动修复提交为 `71954ca`
-(`rmcdhf_mpi: preserve summary after rsave`)。主要轨道优化诊断功能最初由提交
+`0.1.0-test1`，已提交的固定阻尼矩阵实施为 `883ebcc`
+(`rmcdhf_mpi: add fixed damping matrix`)。主要轨道优化诊断功能最初由提交
 `b30a1e3` (`Add RMCDHF orbital optimization safeguards`) 引入。
 
 ## 2. 总体实施状态
@@ -113,10 +113,14 @@
 - `compare_sum.py`：比较 CSF 数、径向网格和 `rmcdhf.sum` 能级；
 - `compare_rmcdhf.py`：从 trace 生成每轮能量间隔、最小重叠、最大半径因子、节点变化和 fallback 摘要；
 - `compare_fine_structure.py`：比较各变体的 J=2、3、4 最低正宇称能级顺序和相对能量；
+- `check_damping_repeatability.py`：对比多轮阻尼矩阵的离散字段和浮点摘要；
+- `run_damping_repeats.sh`：在同一 CPU 亲和性下运行三次完整阻尼矩阵并自动比较；
 - `README.md`：记录运行方法、参数和输出物；
 - `RESULTS.md`：记录已完成的 AS2 B2/B3/B4 结果。
 
 runner 会保存 stdin、stdout、退出码、`orbopt_trace.csv`、`orbopt_summary.csv`、`rmcdhf.sum` 及与归档基线的比较。若输出目录已存在则拒绝覆盖。
+多线程运行还会保存 `mpi_launcher.txt`；其中记录显式的
+`--map-by slot:PE=N --bind-to core` 启动参数与 OpenMP 线程设置。
 
 `rsave` 会将通用 `rmcdhf.sum` 重命名为算例前缀的 `.sum`文件。
 提交 `71954ca` 在 `rsave` 后恢复通用名副本，保持
@@ -188,7 +192,7 @@ strict 收敛在第 13 轮停止。
 新增 `summarize_damping.py`，从每个 `orbopt_trace.csv` 和 `rmcdhf.sum`
 统一汇总轮数、原始/接受轨道指标、节点变化、fallback、谱序和相对间隔。
 
-2026-08-25 使用 4 MPI ranks、每 rank 12 threads 完成了该矩阵。所有算例退出码为 0、
+2026-08-25 完成了该矩阵。所有算例退出码为 0、
 通过 legacy 收敛检查、保持预期精细结构顺序，且没有 MPI rank 摘要差异。
 `-0.2/-0.5/-0.8` 的轮数分别为：Cl I `15/21/47`，Ni/Ca-like `10/17/40`，
 Ni I `18/29/47`。对应的接受后最小重叠为：Cl I `0.704/0.895/0.986`，
@@ -213,12 +217,35 @@ Ni I $J=2/3$ 误差约为 `-201/-121 cm⁻¹`；Ni IX $J=3/4$
 正确谱序，但 NIST 间隔误差仍大于各自的 no-varied 结果。因此实施验收中
 必须分开报告谱序、轨道稳定性和 NIST 间隔误差，不能用其中一项代替另一项。
 
+### 5.5 显式 48 核绑定与三轮重复性
+
+亲和性检查发现，原来的“4 MPI ranks × 12 threads”只设置了
+线程数，OpenMPI 默认将每个 rank 绑定到单核，实际只使用了 4 核。
+`run_data_case.sh` 现在于线程数大于 1 时构造：
+
+```text
+mpirun --map-by slot:PE=<threads> --bind-to core -n <ranks>
+```
+
+同时设置 `OMP_PLACES=cores` 和 `OMP_PROC_BIND=true`。在 48 物理核
+主机上，默认重复性配置为 4 ranks × 12 cores/rank，四个 rank
+的核集互不重叠。
+
+修正后在同一 48 核配置下运行三轮九算例阻尼矩阵。27/27
+个 RMCDHF 运行成功，三个矩阵均完成，无 rank 摘要差异。第 2、3 轮
+相对第 1 轮的 18 项比较全部匹配，最大浮点摘要差为 0，迭代次数、
+节点/fallback 计数和谱序也完全一致。精简结果已保存在
+`test/rmcdhf_orbopt/results/damping_repeatability_20260825/`。
+
+因此，“每个阻尼变体至少三次”已列入完成项。原有的性能对比因
+缺少显式 PE 绑定而不再作为“4×12 最快”的证据；若要选择最佳并行
+配置，需要在同一显式绑定政策下重新计时。
+
 ## 6. 尚未列入“已完成”的项目
 
 为防止将原型误写为最终修复，以下项目明确不属于已完成范围：
 
 - B5/B6 及 B8 等权/统计权重对照已实施；B7 独立 CI/RCI 与 B8 不同状态集合尚未实施；
-- B4 `ODAMP=-0.2/-0.5/-0.8` 三体系矩阵已完成，但每个变体至少 3 次的重复性验收尚未完成；
 - 串行与 MPI 的 Cl I AS1 最终结果及 MPI 1/2/4 已一致，但所有算例的逐轮串行/MPI 全矩阵尚未完成；
 - `run_matrix.sh` 已覆盖 Ni 与 Cl I B0–B6，但尚未作为长耗时 CTest 默认执行；
 - B6 strict fallback 已实现；稳定 `ORTHY` 顺序、节点验收和真正的伙伴联立更新尚未实施；
