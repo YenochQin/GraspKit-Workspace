@@ -118,6 +118,11 @@
 - `README.md`：记录运行方法、参数和输出物；
 - `RESULTS.md`：记录已完成的 AS2 B2/B3/B4 结果。
 
+从 2026-08-26 起，所有测试 runner 都强制将生成结果写入
+`rmcdhf_test/test/data/` 下的结果子目录；相对路径自动解析到该目录，目录外的
+绝对路径会被拒绝。每次运行都会从 `test/data` 中的现有算例复制 `isodata`、CSF
+和波函数输入，再在新的结果目录计算，避免结果与输入来源脱离。
+
 runner 会保存 stdin、stdout、退出码、`orbopt_trace.csv`、`orbopt_summary.csv`、`rmcdhf.sum` 及与归档基线的比较。若输出目录已存在则拒绝覆盖。
 多线程运行还会保存 `mpi_launcher.txt`；其中记录显式的
 `--map-by slot:PE=N --bind-to core` 启动参数与 OpenMP 线程设置。
@@ -245,7 +250,7 @@ mpirun --map-by slot:PE=<threads> --bind-to core -n <ranks>
 
 为防止将原型误写为最终修复，以下项目明确不属于已完成范围：
 
-- B5/B6 及 B8 等权/统计权重对照已实施；B7 独立 CI/RCI 与 B8 不同状态集合尚未实施；
+- B5/B6 及 B8 等权/统计权重对照已实施；B7 固定轨道 CI/RCI runner 与 Cl I 单例对照已实施，但 Ni I、Ni/Ca-like 多体系矩阵及 B8 不同状态集合尚未实施；
 - 串行与 MPI 的 Cl I AS1 最终结果及 MPI 1/2/4 已一致，但所有算例的逐轮串行/MPI 全矩阵尚未完成；
 - `run_matrix.sh` 已覆盖 Ni 与 Cl I B0–B6，但尚未作为长耗时 CTest 默认执行；
 - B6 strict fallback 已实现；稳定 `ORTHY` 顺序、节点验收和真正的伙伴联立更新尚未实施；
