@@ -12,6 +12,7 @@ This directory is a workspace holding four paired repositories that are develope
 - **`graspkit-tools/`** — the **end-user / publicly released product**. Bundles pipeline scripts, configuration UIs, and SLURM orchestration on top of `grasp-kit` and `rcsfs`. This is what external users install and run; treat its CLI/config surface as the public contract. See `graspkit-tools/CLAUDE.md` and `graspkit-tools/AGENTS.md`.
   - Entry points: `ml_CSFs_selection_scripts/` (training, config loader, run scripts, Streamlit config app under `ml_CSFs_selection_scripts/initialization_tools/config_app/`), `pyscript/` (analysis/plotting), `scripts/` (shell helpers).
 - **`nist_data/`** — the independent **NIST ASD data package** (`nist-data`). It reads and normalizes exported levels data and may later own online query/cache behavior. `graspkit-tools` consumes it editable from `../nist_data`; `graspkit` remains source-agnostic. See `nist_data/CLAUDE.md` and `nist_data/AGENTS.md`.
+- **`grasp/`** — a local copy of the **GRASP program source**, retained as reference material for understanding upstream GRASP behavior and interfaces while developing the paired repositories. It is not imported by the Python/Rust packages and does not participate in the workspace build or dependency graph.
 
 ## Python Environment
 
