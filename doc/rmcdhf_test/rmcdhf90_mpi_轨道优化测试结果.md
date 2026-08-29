@@ -195,6 +195,33 @@ Ni I guard 运行中，`6s`、`5d`、`4f-` 和 `4f` 原始候选被拒绝。当�
 
 ## 6. 求解器 fallback 和 MPI 观测
 
+### 6.1 2026-08-28 Slurm 三轮 MPI 复现
+
+为验证结果不依赖 MPI 进程数，使用 `rmcdhf_test/test/rmcdhf_orbopt/run_repro_sbatch.sh`
+通过 Slurm 作业 491 完成 Ni/Ca-like AS2 的 B0、B1、B3 和 B8 三轮复现。作业按
+`Cl_I/mcdhfmpi.sh` 的规范申请 1 节点、48 个 task、`batch` 分区；三轮分别使用
+MPI 1/2/4，并将 OpenMP 线程设为 12/6/3。作业耗时 1:23:49，Slurm 状态为
+`COMPLETED`，退出码为 0。
+
+结果保存在 `test/data/results/repro_sbatch_20260828/`。12 个运行全部
+`rmcdhf.exitcode=0`，并且每个变体三次生成的 `rmcdhf.sum` 文件逐字节一致：
+
+| 变体 | MPI 1/2/4 | 三次结果 |
+| --- | --- | --- |
+| B0 | 1/2/4 | MD5 `ec3e70f89e44e55597512519ab8b75d0` |
+| B1 | 1/2/4 | MD5 `651da357426fe1d77f2f738435f09e8c` |
+| B3 | 1/2/4 | MD5 `3db25dde7a5e19bb7108ba66295df509` |
+| B8 | 1/2/4 | MD5 `eac46afb5f4cf7407f6ae9bd516588ce` |
+
+所有 12 份 `orbopt_trace.csv` 均通过 legacy 收敛语义检查，证明 B1 的异常谱序、
+B3 的成对优化结果和 B8 的等权重结果在 MPI 1/2/4 下均可重复。该结果补齐了
+“每个关键变体至少三次重复”和“同输入 MPI 1/2/4 一致性”两项证据。
+
+同时修复 `check_strict_scf.py`：新版 trace 缺少派生字段时，根据
+`convg_orbital`、`convg_energy`、`convg_final` 和 `wtaev0` 自动推导
+`convg_legacy`、`convg_strict`、`energy_valid`、`strict_streak`，旧版 trace
+仍按原字段直接验证。由此避免将分析器版本不匹配误报为计算失败。
+
 已记录的 B2/B3/B4 运行均未发生 `SOLVE` 失败后的 `METHOD=2` fallback。当前证据不支持把 fallback 作为这两组 AS2 结果的首要原因。
 
 原先的性能记录未显式为每个 rank 分配 12 个 PE，因此不能用于

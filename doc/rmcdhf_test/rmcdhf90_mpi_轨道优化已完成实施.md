@@ -218,6 +218,18 @@ Ni I $J=2/3$ 误差约为 `-201/-121 cm⁻¹`；Ni IX $J=3/4$
 误差约为 `+10/+119 cm⁻¹`。三档阻尼之间的 NIST 误差差异很小，
 证明增强阻尼主要影响轨道更新稳定性，不会显著修正最终间隔。
 
+### 5.5 三轮重复与收敛校验器兼容
+
+2026-08-28 按服务器 `Cl_I/mcdhfmpi.sh` 的 Slurm 头部规范新增
+`test/rmcdhf_orbopt/run_repro_sbatch.sh`，并以作业 491 运行 Ni/Ca-like AS2
+的 B0、B1、B3、B8。每个变体分别用 MPI 1、2、4 完成三次计算；12 个运行
+全部退出码为 0，四个变体在三种 MPI 配置下的 `rmcdhf.sum` 均逐字节一致。
+完整输出归档于 `test/data/results/repro_sbatch_20260828/`。
+
+同时更新 `check_strict_scf.py`，兼容新版只输出基础收敛字段的轨迹，并在检查时
+推导 legacy/strict 收敛字段。现有复现轨迹均已通过 legacy 检查；这项修复只影响
+诊断工具，不改变 `rmcdhf_mpi` 数值路径。
+
 与 no-varied 基线比较，Ni IX 间隔精度明显改善；Ni I 和 Cl I 虽保持了
 正确谱序，但 NIST 间隔误差仍大于各自的 no-varied 结果。因此实施验收中
 必须分开报告谱序、轨道稳定性和 NIST 间隔误差，不能用其中一项代替另一项。
