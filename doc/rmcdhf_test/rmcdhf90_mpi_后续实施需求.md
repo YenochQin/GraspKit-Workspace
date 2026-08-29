@@ -77,6 +77,47 @@ env | sort | grep -E '^(GRASP|OMP|OPENBLAS|MPI)'
 
 对于已提供的服务器计算结果，还必须记录实际 sbatch 脚本路径或脚本副本、所用 GRASP module、NNNP 值、`mpi/openmpi-x86_64`、gfortran 15.2.1 以及 `libflexiblas_openblas-openmp.so`。脚本中的 `srun --mpi=pmix`、`--cpu-bind`、`--ntasks-per-node` 和 `OMP_NUM_THREADS` 等参数必须原样保留，因为它们会影响 MPI 进程布局和数值可重复性。
 
+Python 分析和校验应使用 `graspkit-tools` 目录中由 `uv` 创建的环境，不使用系统 Python
+或单独创建的临时环境。推荐命令为：
+
+```sh
+cd graspkit-tools
+uv run python -m pytest ...
+uv run python ../rmcdhf_test/test/rmcdhf_orbopt/compare_mpi_reproducibility.py ...
+```
+
+如果已经激活该环境，也必须在运行记录中保留 `graspkit-tools/.venv/bin/python3` 的
+路径和 `uv` 锁定的依赖版本。
+
+### 2.3 CSF 文件命名与数量审计
+
+原始数据计算过程中，使用 `rcsfgenerate` 为每个活性空间生成的 CSF 文件命名为：
+
+```text
+${conf}as${as}_raw.c
+```
+
+计算实际读取或归档保存的 CSF 文件命名为：
+
+```text
+${conf}as${as}.c
+```
+
+因此，`_raw.c` 是活性空间生成阶段的输入快照，`.c` 是后续计算阶段实际使用或保存的
+CSF 文件。两者必须同时保留或在 manifest 中明确来源，不能仅根据 basename 判断它们
+内容相同。
+
+计算过程中可能调用 GRASP 的 `rcsfinteract` 工具。若调用过，`rcsfinteract` 可能筛选、
+重排或扩展 CSF，使计算前后的 CSF 数量不一致。每个活性空间都应记录：
+
+- `rcsfgenerate` 生成的 `_raw.c` CSF 数量；
+- `rcsfinteract` 的输入、输出、完整 stdout/stderr 和调用参数；
+- `rmcdhf`/`rci` 实际读取的 `.c` 文件及其 CSF 数量；
+- 计算前后数量差异及产生差异的具体步骤。
+
+在 `compare_sum.py` 或其他汇总脚本中，CSF 数量比较必须注明比较的是 `_raw.c`、
+`rcsfinteract` 输出还是最终 `.c`，避免把正常的 CSF 筛选误判为数据损坏或程序不一致。
+
 ## 3. 问题描述
 
 每个问题案例应明确写出：
