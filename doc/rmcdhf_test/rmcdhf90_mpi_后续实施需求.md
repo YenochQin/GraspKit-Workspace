@@ -30,6 +30,26 @@ rmix.out（如果程序生成）
 
 ## 2. 程序与运行环境信息
 
+### 2.1 当前计算的统一来源
+
+目前已提供的计算结果均在同一台服务器上完成，并通过 Slurm `sbatch` 脚本提交。
+结果目录应保留实际使用的 sbatch 脚本；脚本中的 module 加载、MPI 启动方式、任务数、
+CPU 绑定和环境变量都是结果来源审计的一部分，不能只保留最终的 `rmcdhf.sum`。
+
+当前服务器基础环境为：
+
+```text
+MPI module：mpi/openmpi-x86_64
+Fortran：本机 gfortran
+版本：gcc version 15.2.1 20260123 (Red Hat 15.2.1-7) (GCC)
+BLAS：FlexiBLAS 管理的 OpenBLAS OpenMP 后端
+动态库：libflexiblas_openblas-openmp.so
+```
+
+### 2.2 两个 GRASP module 的区别
+
+计算使用的 GRASP 来自 `grasp/grasp_2990_NNNP` 或 `grasp/grasp_raw`，必须在结果记录中明确写出。`grasp_raw` 是从 GitHub 完整 clone 后直接编译的程序；`grasp_2990_NNNP` 则是在同一源码基础上，将 `rmcdhf_test/src/lib/libmod/parameter_def_M.f90` 中的 `NNNP` 从 590 改为 2990 后重新编译得到。`NNNP` 会影响径向网格上限和数组规模，因此两者不能混入同一个 golden baseline。
+
 每个数据集必须同时记录：
 
 ```text
@@ -54,6 +74,8 @@ mpirun --version
 module list
 env | sort | grep -E '^(GRASP|OMP|OPENBLAS|MPI)'
 ```
+
+对于已提供的服务器计算结果，还必须记录实际 sbatch 脚本路径或脚本副本、所用 GRASP module、NNNP 值、`mpi/openmpi-x86_64`、gfortran 15.2.1 以及 `libflexiblas_openblas-openmp.so`。脚本中的 `srun --mpi=pmix`、`--cpu-bind`、`--ntasks-per-node` 和 `OMP_NUM_THREADS` 等参数必须原样保留，因为它们会影响 MPI 进程布局和数值可重复性。
 
 ## 3. 问题描述
 
