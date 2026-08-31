@@ -140,9 +140,9 @@
 - `README.md`：记录运行方法、参数和输出物；
 - `RESULTS.md`：记录已完成的 AS2 B2/B3/B4 结果。
 
-从 2026-08-26 起，所有测试 runner 都强制将生成结果写入
-`rmcdhf_test/test/data/` 下的结果子目录；相对路径自动解析到该目录，目录外的
-绝对路径会被拒绝。每次运行都会从 `test/data` 中的现有算例复制 `isodata`、CSF
+自 2026-08-31 起，所有测试 runner 都强制将生成结果写入
+`data/rmcdhf_test_data/results/` 下的结果子目录；相对路径自动解析到该目录，目录外的
+绝对路径会被拒绝。每次运行都会从 `data/rmcdhf_test_data/inputs/` 中的现有算例复制 `isodata`、CSF
 和波函数输入，再在新的结果目录计算，避免结果与输入来源脱离。
 
 runner 会保存 stdin、stdout、退出码、`orbopt_trace.csv`、`orbopt_summary.csv`、`rmcdhf.sum` 及与归档基线的比较。若输出目录已存在则拒绝覆盖。

@@ -15,9 +15,10 @@
 复现结果。仓库只保存小型汇总；未跟踪或仅位于外部实验目录的
 完整 trace 不自动视为已归档证据。
 
-自 2026-08-26 起，测试结果归档规则已调整为：所有 runner 结果保存到
-`rmcdhf_test/test/data/` 下的新建结果目录；输入文件始终从该目录中的现有算例
-复制后再计算。此前位于 `/tmp` 的历史结果不自动视为仓库内归档结果。
+自 2026-08-31 起，所有 runner 结果保存到
+`data/rmcdhf_test_data/results/` 下的新建结果目录；输入文件始终从
+`data/rmcdhf_test_data/inputs/` 复制后再计算。从 `/tmp` 找回的历史结果已保存在
+`data/rmcdhf_test_data/results/recovered_20260831/tmp/`。
 
 ## 2. 测试对象与变体
 
@@ -209,7 +210,7 @@ Ni I guard 运行中，`6s`、`5d`、`4f-` 和 `4f` 原始候选被拒绝。当�
 MPI 1/2/4，并将 OpenMP 线程设为 12/6/3。作业耗时 1:23:49，Slurm 状态为
 `COMPLETED`，退出码为 0。
 
-结果保存在 `test/data/results/repro_sbatch_20260828/`。12 个运行全部
+原结果保存在 `test/data/results/repro_sbatch_20260828/`；删除事故后该目录未能原样找回。12 个运行全部
 `rmcdhf.exitcode=0`，并且每个变体三次生成的 `rmcdhf.sum` 文件逐字节一致：
 
 | 变体 | MPI 1/2/4 | 三次结果 |

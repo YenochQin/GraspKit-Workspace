@@ -374,7 +374,7 @@ getscdmpi.f90: CALL NUCPOT
 
 ## 8. 预期交付物
 
-1. `test/data/results/<run>/` 或外部受管结果目录：每个实验的输入快照、日志和轨道质量 CSV；
+1. `data/rmcdhf_test_data/results/<run>/`：每个实验的输入快照、日志和轨道质量 CSV；
 2. `test/rmcdhf_orbopt/compare_rmcdhf.py`：计算 $\Delta E_J$、能量差、径向重叠、节点数、$\langle r\rangle$ 并生成图表；
 3. 一份“输入选择错误 / MPI 差异 / 正交化问题 / 求解器问题 / 物理模型偏置”的证据表；
 4. 仅在证据支持时提交 P1/P2 代码补丁，并附逐项回归结果。
