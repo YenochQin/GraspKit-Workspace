@@ -16,3 +16,4 @@
 !/doc/rmcdhf_test/
 /doc/rmcdhf_test/*
 !/doc/rmcdhf_test/rmcdhf90_mpi_轨道优化调试方案.md
+!/doc/rmcdhf_test/rmcdhf90_mpi_轨道优化代码核查.md
