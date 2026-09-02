@@ -132,12 +132,11 @@ CSF 文件。两者必须同时保留或在 manifest 中明确来源，不能仅
 
 如果问题只在 MPI 版本出现，请明确标记为 MPI 专属问题，并提供对应的串行结果。
 
-## 4. MPI 一致性对照
+## 4. 生产 MPI 重复性对照
 
-同一输入至少提供以下运行组合中的可用部分：
+对活性空间扩展后的生产输入，仅要求提供以下 `_mpi` 运行组合中的可用部分：
 
 ```text
-serial rmcdhf90
 rmcdhf90_mpi：1 rank
 rmcdhf90_mpi：2 ranks
 rmcdhf90_mpi：4 ranks
