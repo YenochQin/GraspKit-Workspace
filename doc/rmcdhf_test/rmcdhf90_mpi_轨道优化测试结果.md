@@ -150,6 +150,13 @@ mpirun --map-by slot:PE=12 --bind-to core -n 4
 `test/rmcdhf_orbopt/results/damping_repeatability_20260825/`，完整 trace 位于
 `/tmp/rmcdhf-damping-repeats-pe12-20260825`。“每个阻尼变体至少三次”现已完成。
 
+这里的 `4 ranks × 12 threads` 只证明当时测试配置的数值重复性，不代表推荐的
+生产性能配置。后续监测发现 RMCDHF 主体并不会持续利用每 rank 的 12 个
+OpenMP/BLAS 线程，部分阶段总 CPU 占用仅约 8%，等价于主要只有 4 个 MPI rank
+工作。因此，从后续作业起，生产规模计算改用 `48 MPI ranks × 1 thread`；
+1/2/4 ranks 仅保留用于 MPI 进程数重复性检查。历史 Job 528、529、532、537
+的科学结论仍有效，但其 4×12 配置不能作为性能基准。
+
 ### 4.3 与本地 NIST ASD CSV 的对比
 
 阻尼矩阵最初的自动汇总只比较计算结果之间的谱序和间隔，没有生成
@@ -201,6 +208,83 @@ Ni I guard 运行中，`6s`、`5d`、`4f-` 和 `4f` 原始候选被拒绝。当�
 因此，当前 guard 的有效交付是“检测并阻止静默接受”，而不是“自动恢复异常轨道”。guard 必须继续默认关闭。
 
 ## 6. 求解器 fallback 和 MPI 观测
+
+### 6.x Job 557–559：AS1 命名波函数继承与初始节点诊断
+
+为定位 Ni I AS2 节点异常是否在首次 `SOLVE` 前已经存在，进行了 AS1→AS2
+链式测试。AS2 使用 AS1 生成的命名波函数（`e1_vv2as1.w`，复制为
+`previous.w`），而不是 `rwfn.out`。
+
+Job 557 首次加入了初始轨道输出，但误把 `MF` 当作节点数；`MF` 实际是该轨道
+使用的径向网格长度（约 365–425），因此该批诊断无效。Job 558 的作业脚本已
+完成，但因修正版二进制编译失败，实际仍调用旧二进制，结论同样无效。
+
+Job 559 修正为在 `GETSCDmpi` 返回后直接调用 GRASP 的 `COUNT`，统计读入
+波函数 `PF(:,J)` 的实际节点数。结果目录为：
+
+```text
+data/rmcdhf_test_data/results/ni-as2-initial-nodecount-559/
+```
+
+AS2 初始波函数的关键结果为：
+
+| 轨道 | 理论 `NNODEP` | 读入波函数节点数 |
+|---|---:|---:|
+| `5d-` | 2 | 3 |
+| `5d` | 2 | 3 |
+| `6s` | 5 | 6 |
+
+其余已输出轨道的节点数与理论值一致。AS2 第一次 `SOLVE` 随后仍报告
+`6s expected=5 counted=3`，并触发 `5d-`、`5d`、`6s` 的护栏拒绝。
+
+该结果证明：Ni I AS2 的异常节点在读入 AS1 波函数、第一次求解之前已经存在，
+不是 AS2 的首次 `SOLVE`、阻尼或 MPI 归约新产生的。下一步应检查 AS1 最终
+`.w` 文件中这三个轨道的实际节点，以及 AS1→AS2 波函数轨道映射；在此之前
+不应放宽节点护栏判据，也不应把 `NNODEP` 替换为“候选节点必须等于理论值”。
+
+诊断实现由以下提交构成：`cbd30c1`（初始状态输出）、`a698d4e`（修正
+继承节点计数）。可复现实验脚本为
+`test/rmcdhf_orbopt/run_ni_as2_initial_nodecount.sbatch`，并已同步复制到
+`data/rmcdhf_test_data/inputs/rmcdhf_orbopt/`。
+
+### 6.y Job 564–565：新增轨道初始估计方法 A/B
+
+在确认 AS1 已有轨道继承节点正确后，Job 564 和 565 只改变 AS2 新增轨道
+的 `rwfnestimate` 方法。Job 564 使用 Screened Hydrogenic（方法 3），Job
+565 使用 Screened Hydrogenic [custom Z]（方法 4，程序给出 `Z_eff=22`）。
+
+| 方法 | `5p-/5p` | `5d-/5d` | `6s` |
+|---|---|---|---|
+| Thomas–Fermi（基线） | 4/4 | 3/3 | 6 |
+| Screened Hydrogenic | 4/4 | 2/2 | 6 |
+| custom Z (`Z_eff=22`) | 4/4 | 3/3 | 6 |
+| 理论 `NNODEP` | 3/3 | 2/2 | 5 |
+
+结果目录分别为 `ni-as2-screened-initial-v2-564/` 和
+`ni-as2-customz-initial-565/`。两项 AS2 均因节点护栏拒绝而退出；AS1 均
+正常完成。
+
+该 A/B 结果表明，改变 `Z_eff` 不能消除 `5p` 和 `6s` 的多一个节点，且会
+使 `5d` 的结果在方法间变化。问题不像是简单的波函数继承错误或有效电荷
+选择错误，更可能与新轨道在径向网格上的外层尾部、截断边界或低幅值数值
+振荡有关：`COUNT` 当前对完整 `MF` 网格计数，可能把尾部符号翻转识别为
+物理节点。下一项实验应在 `MTP`、`MTP-10`、`MTP-20` 等截断位置重复
+`COUNT`，先确认是否存在外层伪节点，再决定是否需要调整节点判据。
+
+### 6.0 Job 528：护栏并行复测
+
+为确认护栏逻辑在生产并行配置下仍成立，提交 Slurm Job 528：1 节点、48
+个 CPU、4 个 MPI ranks，每个 rank 12 个 OpenMP 线程。两个 AS2 算例均在同一
+作业中独立执行，结果归档于
+`data/rmcdhf_test_data/results/guard-tests-528/`。
+
+- Ni I：连续候选拒绝后按预期终止；`GRASP_EXPECT_RMCDHF_FAILURE=1` 正确捕获
+  非零的 `rmcdhf_mpi` 状态，作业包装器记录 `ni_i_as2_guard,0`；
+- Ni/Ca-like：护栏未触发拒绝，17 轮 legacy SCF 收敛，接受后最小重叠
+  `0.9999997`、最大半径因子 `1.0008062`、节点变化 `0`，并生成完整
+  `e1_cvas2_rmcdhf.csv`；包装器记录 `ni_ca_like_as2_guard,0`；
+- Slurm 作业和 batch step 均为 `COMPLETED`，退出码 `0:0`，资源记账为
+  `cpu=48`。因此，单核 Job 527 得到的护栏结论已在 4-rank/48-CPU 配置下复现。
 
 ### 6.1 2026-08-28 Slurm 三轮 MPI 复现
 
@@ -316,6 +400,108 @@ smoke profile 最终状态为 `complete`。收敛语义检查证实：
 
 ## 8. 未完成的测试项
 
+### 8.1 Job 529：Cl I AS2--AS5 链式节点稳定性
+
+使用 48 CPU、4 MPI ranks（每 rank 12 个 OpenMP 线程）提交连续活动空间测试。
+AS2 的输出波函数逐阶段传递给 AS3、AS4 和 AS5，固定 `ODAMP=-0.5`。作业
+529 完成，四个阶段退出码均为 0，均通过 legacy 收敛检查：
+
+| 阶段 | SCF 轮数 | 最小接受重叠 | 最大接受半径因子 | 节点变化 |
+| --- | ---: | ---: | ---: | ---: |
+| AS2 | 20 | 0.9999999 | 1.0003965 | 0 |
+| AS3 | 21 | 0.9999828 | 1.0010473 | 0 |
+| AS4 | 27 | 0.9995258 | 1.0025099 | 0 |
+| AS5 | 29 | 0.9999336 | 1.0046493 | 0 |
+
+结果目录为 `data/rmcdhf_test_data/results/cl-as-chain-529/`。在该 Cl I 链式
+算例中，扩大活动空间没有引入节点跳变；AS4/AS5 的半径变化仍处于百分之一量级，
+支持将该配置作为稳定基线。该结论不能外推到 Ni I（其 AS2 仍有节点变化）。
+
+### 8.2 Job 530：Ni I 节点验收 A/B
+
+Job 530 使用 48 CPU、4 MPI ranks × 12 OpenMP threads，对 Ni I AS2 仅切换
+`GRASP_REJECT_NODE_CHANGE`，并放宽重叠/半径阈值以隔离节点因素。`node_check_off`
+在 29 轮后正常完成；`node_check_on` 在第 3 轮对 `6s` 连续第 3 次节点拒绝，
+日志明确记录 `ORBOPT rejection limit exceeded for 6s`，4 个 RMCDHF 进程随后
+退出。但 MPI 运行时 `prterun` 未完成回收，Slurm 作业在计算已停止后仍保持
+RUNNING、CPU 使用率接近 0%，最终由管理员取消（总挂起约 17 小时）。
+
+该结果确认节点验收确实能阻止异常候选，但也暴露出“预期失败路径 + MPI 回收”
+的作业包装问题；不能把 Slurm 的长时间 RUNNING 误判为仍在计算。后续应在脚本中
+为预期失败路径设置超时/进程组清理，并单独测试拒绝后的阻尼恢复。
+
+### 8.3 Job 532：预期失败路径进程组清理复测
+
+Job 532 使用修正后的 runner，在检测到 `ERROR STOP ORBOPT` 或拒绝上限标记后
+立即终止 timeout/MPI launcher，并保留完整退出码。48 CPU、4 MPI ranks 的
+`node_check_off` 在 29 轮后正常完成；`node_check_on` 在第 3 轮对 `6s`
+触发节点拒绝并以 `rmcdhf.exitcode=1` 结束，包装器将其作为 expected failure
+记录。整个作业 10 分 40 秒完成，Slurm 退出码为 `0:0`，未留下 `prterun`、
+`mpirun` 或 `rmcdhf_mpi` 残留进程。结果位于
+`data/rmcdhf_test_data/results/ni-node-acceptance-532/`。
+
+这证明 530 暴露的是 MPI 失败回收/脚本问题，而非 RMCDHF 在节点拒绝后持续计算。
+
+### 8.4 Job 533：阻尼后节点恢复证据
+
+Job 533 从 Job 525 的 Ni I AS2 trace 逐更新配对 `orbital_metrics`（原始
+`SOLVE` 候选）与 `accepted_metrics`（`DAMPOR` 后实际接受轨道），统计原始
+节点变化能否被阻尼修复：
+
+| `ODAMP` | 原始节点变化 | 阻尼后恢复 | 阻尼后仍变化 | 新引入变化 |
+| ---: | ---: | ---: | ---: | ---: |
+| -0.2 | 4 | 1 | 3 | 0 |
+| -0.5 | 9 | 6 | 3 | 0 |
+| -0.8 | 28 | 26 | 2 | 0 |
+
+结果位于 `data/rmcdhf_test_data/results/node-recovery-533/`。证据表明在原始
+候选阶段直接拒绝会拦截大量本可由阻尼恢复的更新；下一步可以实现默认关闭的
+“先阻尼、再按节点/重叠/半径验收”实验路径。仍未恢复的候选必须回退，不能仅因
+高阻尼总体恢复率较高而接受。
+
+### 8.5 Job 537：阻尼后验收矩阵
+
+Job 537 使用 48 CPU、4 MPI ranks 完成四算例矩阵，Slurm 状态
+`COMPLETED`、退出码 `0:0`，耗时 21 分 41 秒，且没有残留 MPI 进程。
+
+| 算例 | `rmcdhf_mpi` 状态 | 终止轮次 | 接受后节点变化 | 结论 |
+| --- | ---: | ---: | ---: | --- |
+| Ni I，阻尼前，-0.5 | 1（预期失败） | 3 | 0 | `6s` 连续拒绝 |
+| Ni I，阻尼后，-0.5 | 1（预期失败） | 13 | 0 | `6s` 最终仍连续拒绝 |
+| Ni I，阻尼后，-0.8 | 1（预期失败） | 15 | 0 | `5d` 最终仍连续拒绝 |
+| Ni/Ca-like，阻尼后，-0.5 | 0 | 17 | 0 | 正常收敛 |
+
+阻尼后验收将 Ni I 的有效推进从第 3 轮延长到第 13/15 轮，并保证所有实际
+接受更新都没有节点变化，说明新路径能恢复多数候选且不会静默接受错误节点。
+但 Ni I 仍不能完成 SCF：-0.5 最终卡在 `6s`，-0.8 最终卡在 `5d`。
+因此该实验开关继续默认关闭，不能宣称已经解决 Ni I 稳定性问题。
+
+### 8.6 Jobs 538/541：默认关闭回归与 48-rank 试运行
+
+Job 538 验证新开关默认关闭时的兼容性。Ni I 与 Ni/Ca-like AS2 均正常完成，
+相对 Job 525 对应 `ODAMP=-0.5` 基线的 CSF 数、径向网格、能级集合完全一致，
+最大能量差均为 `0.0 Hartree`。因此默认关闭回归通过。
+
+Job 541 尝试以 `48 MPI ranks × 1 thread` 重跑阻尼后验收。Ni I 的 -0.5/-0.8
+算例仍分别以真实退出码 1 预期终止。Ni/Ca-like 已推进到第 17 轮，但在该轮
+最后一个轨道更新附近没有完成 SCF 收尾，达到 30 分钟 runner 超时后以 124
+结束；Slurm 作业因此为 `FAILED (124:0)`。作业总耗时 52 分 03 秒，累计
+CPU 时间约 41 小时，说明大部分时间确有计算，并非全程 0% CPU 的 launcher
+假挂起。
+
+该结果表明“所有算例直接使用 48 ranks”不能仅凭核数假定更高效；当前
+
+### 8.7 Jobs 546--549：纯 MPI rank 扩展性诊断
+
+同一 Ni/Ca-like AS2 在 12、24、48 MPI ranks（每 rank 1 thread）下均完成 17
+轮收敛，结果完全一致。用时分别为 987 s、1958 s、1893 s。该结果说明 12
+ranks 已接近本算例的最佳规模，24/48 ranks 的通信和负载粒度开销使其更慢。
+后续生产应依据实测扩展性选择 ranks（当前该算例先用 12 ranks），并保持
+`OMP_NUM_THREADS=OPENBLAS_NUM_THREADS=1`。
+Ni/Ca-like AS2 在 48 ranks 下还存在负载粒度、同步或退出阶段问题。Job 541
+不能作为 48-rank 验收通过证据，后续应先做 48-rank 卡点诊断，再决定生产
+rank 数；同时保持每 rank 1 thread，不恢复低利用率的 4×12 混合配置。
+
 下列内容在原调试方案中已定义，但尚没有完整结果：
 
 - B7 独立 CI/RCI 的 Ni I、Ni/Ca-like 多体系矩阵；
@@ -381,3 +567,213 @@ CI（含 RCI 的重混合、Breit/QED 选项）相对 RMCDHF EOL 结果的独立
 6. Cl I、strict SCF、B5/B6、阻尼全矩阵、三轮重复性和已选 MPI 对照已补齐，
    但在完成 B7、完整串行/MPI 矩阵与节点稳定性验收之前，本实施仍是诊断/实验版，
    不是已验收的最终生产修复。
+### Job 567：COUNT 的 `THRESH` 敏感性
+
+Job 567 测试了 `GRASP_COUNT_THRESH=0.01、0.05、0.20`，并在 `MTP`、
+`MTP-10`、`MTP-20` 截断位置重复计数。结果为：
+
+| `THRESH` | `5p-/5p` | `5d-/5d` | `6s` |
+|---:|---|---|---:|
+| 0.01 | 4/4 | 3/3 | 6 |
+| 0.05（默认） | 4/4 | 3/3 | 6 |
+| 0.20 | 2/2 | 3/3 | 4 |
+| 理论值 | 3/3 | 2/2 | 5 |
+
+三种截断位置的结果完全相同，排除了外层网格边界伪节点。`THRESH=0.20`
+会滤掉真实节点，不能用于生产；默认 `0.05` 暂不修改。结果目录为
+`data/rmcdhf_test_data/results/ni-count-threshold-matrix-567/`。
+### Job 574：高 `THRESH` 边界测试
+
+Job 574 测试了 `THRESH=0.25、0.30、0.40、0.50`。`THRESH=0.30` 可将
+`5d-/5d` 调整为理论的 2 个节点，但同时使 `5p` 和 `6s` 严重欠计数；
+更高阈值继续删除真实节点。结果证明不存在可同时修正所有新增轨道的统一
+全局 `THRESH`，不能通过调高默认阈值解决 Ni I AS2 问题。
+
+结果目录：`data/rmcdhf_test_data/results/ni-count-threshold-matrix-574/`。
+后续应转向轨道相关的节点判定，或修正新增轨道的初始径向函数生成过程。
+### Job 575：恢复 `ED1=PED(J)` 的回归验证
+
+串行 `IMPROV` 在每次轨道优化开始时执行 `ED1=PED(J)`，MPI 版此前遗漏。
+已补回该行并重新编译，在 Job 575 中运行 Ni I AS1→AS2 回归。AS1 正常
+完成；AS2 仍因 `5d-`、`5d`、`6s` 节点候选连续被拒绝而达到拒绝上限，
+`rmcdhf.exitcode=1`（按预期护栏失败）。
+
+结果目录：`data/rmcdhf_test_data/results/ni-ed1-fix-regression-575/`。
+该修复纠正了 MPI 与串行版的能量状态初始化差异，是必要的兼容性修正，
+但没有消除 Ni I AS2 的节点失稳，因此不是当前能级顺序异常的唯一根因。
+
+### Jobs 579–582：`NDCOF` 合并计数与节点护栏诊断
+
+Job 579 使用提交 `5dbd12f`（MPI `DA/NDA` 合并后令 `NDCOF=i_last`）在
+Ni/Ca-like AS2 上运行 46 个 MPI rank。作业退出码为 0，17 轮收敛，无
+fallback、节点变化或轨道拒绝。前三个 $^3F_J$ 能级保持
+$J=2<J=3<J=4$，间隔为 1890.40 和 2298.38 cm$^{-1}$；NIST 基准为
+1880 和 2200 cm$^{-1}$。本次结果证明该修复在高 rank 下可稳定运行，但
+尚不能单独证明它消除了所有物理偏差。
+
+Job 580 使用同一修复和 46 个 MPI rank 完成 Cl I AS2–AS5 成对优化。四个
+阶段退出码均为 0，分别经过 20、21、27、29 轮收敛；无 fallback 和节点
+变化。所有阶段均保持 $^2P_{3/2}<{}^2P_{1/2}$，间隔为 930.99、931.12、
+931.15、931.09 cm$^{-1}$，而 NIST 为 882.3515 cm$^{-1}$。因此轨道优化
+后的顺序稳定，但精细结构间隔仍有约 49 cm$^{-1}$ 的系统偏差。
+
+Job 581 在 Ni I AS1→AS2 上恢复节点护栏（46 个 MPI rank）。AS1 正常
+完成；AS2 在第 12 轮因 `5d-` 候选节点由 3 变为 2，达到拒绝上限并以
+退出码 1 终止。阻尼后的已接受轨道节点数未变化，首次异常出现在候选
+轨道阶段。
+
+Job 582 只关闭节点拒绝，其他参数与 Job 581 相同。AS1 和 AS2 均成功
+收敛（29、32 轮），最终保持 $^3F_4<{}^3F_3<{}^3F_2$；间隔为 1375.88
+和 916.11 cm$^{-1}$，NIST 为 1332.164 和 884.39 cm$^{-1}$。trace 明确
+记录了接受后的节点变化：第 3–4 轮 `5p-`、`5p`、`6s`、`5d-`、`5d`
+分别出现 3→2、3→2、6→5、3→2、3→2。该对照证明 AS2 失败来自节点
+护栏对候选轨道的拒绝，而非求解器不能收敛；候选轨道生成和初始径向
+函数仍是后续主线。
+
+### Jobs 586–588：重复性与 `ORTHY` 排除实验
+
+Jobs 586、587 分别重复 Jobs 581、582 的节点护栏开/关实验。两次 AS2
+`orbopt_trace.csv` 与对应原实验逐字节相同（SHA-256 分别为
+`105819ba...f504a9` 和 `1b05593c...478d2`）。这证明护栏失败和关闭护栏后
+的收敛结果在 46-rank LBL MPI 流程中可重复。
+
+对 Job 587 最终 `e1_vv2as2.w` 使用 `graspkit-tools` 独立转换为径向 CSV，
+再按 GRASP `COUNT` 的 0.05 幅值阈值计数，得到 `5p-/5p=3/3`、
+`5d-/5d=2/2`、`6s=5`，全部等于 `NNODEP`。因此第 3–4 轮记录的节点变化
+不是最终轨道丢失物理节点，而是优化把带多余节点的初始估计修正到要求值。
+当前护栏要求 `nodes_old == nodes_candidate`，会错误拒绝这种合法修正。
+
+Job 588 设置 `GRASP_DEFER_ORTHY=1`，在 Ni I AS1 第 3 轮即失败。`4d`
+候选重叠降至约 `1.6e-51`，平均半径从约 5.76 缩至 `7.5e-9 a0`，连续触发
+半径拒绝。结合 Job 587 的节点变化在 `DAMPOR` 后、`ORTHY` 前已经出现，
+逐轨道 `ORTHY` 不是节点变化的首发位置；延迟正交化会破坏 SCF 稳定性，
+不能作为修复。
+
+### Job 589：理论节点判据与阻尼后检查的边界
+
+Job 589 使用提交 `b47ac87` 的“候选节点必须等于 `NNODEP`”判据，46 个
+MPI rank，`ODAMP=-0.5`，逐轨道 `ORTHY`，并开启阻尼后检查。AS1 正常经过
+29 轮；AS2 在第 3 个宏迭代处理 `6s` 时以 `rmcdhf.exitcode=137` 停止。
+标准输出同时记录了 3 次
+`ERROR STOP ORBOPT orbital rejection limit exceeded`，随后 runner 主动
+终止 `srun` 进程组，因此 137 是预期失败路径的 launcher 清理码，不是
+Slurm 的 OOM 证据。
+
+该 trace 将失败阶段分开了：
+
+| 阶段 | `6s` 节点数 | 与理论 `NNODEP=5` 的关系 |
+| --- | ---: | --- |
+| AS2 初始旧轨道 | 6 | 多 1 个节点 |
+| 第 1/2 轮原始 `SOLVE` 候选 | 3 | 少 2 个节点，原始检查拒绝 |
+| Job 587 同一输入的 `DAMPOR` 后候选 | 6 | 回到旧轨道节点数，距离理论值没有变坏 |
+
+因此“阻尼后候选必须立即等于理论值”仍然过严：它会拒绝从错误初始节点
+向理论节点逐步靠近的合法更新。更细的代码审计还发现，`DAMPOR` 之后
+`P/Q` 保存旧轨道、`PF/QF` 保存阻尼后的候选，但 Job 589 的检查直接把
+`CALCULATE_ORBITAL_METRICS` 返回的 `NODES_OLD/NODES_CANDIDATE` 作为原方向
+传入；阻尼后检查实际检查了反向的“旧/新”对象。该方向错误必须与节点
+判据修正分开记录。
+
+下一项实验通过 `GRASP_NODE_GUARD_PROGRESS=1` 只改变这两处节点护栏逻辑：
+原始候选不再要求直接等于 `NNODEP`，阻尼后按 `abs(nodes- NNODEP)` 相对旧
+轨道不增加来验收，并修正阻尼后质量指标的参数方向；阻尼因子、正交化顺序、
+EOL 权重、MPI rank 和输入保持不变。若该实验能完成 AS2，再检查最终波函数是否回到 `5p-/5p=3/3`、
+`5d-/5d=2/2`、`6s=5` 以及 $^3F_4<{}^3F_3<{}^3F_2$，不能只依据作业
+退出码判定修复成立。
+
+### Job 590：节点单向进度护栏
+
+Job 590 在同一 Ni I AS1→AS2 输入上开启 `GRASP_NODE_GUARD_PROGRESS=1`，使用
+46 个 MPI rank、`ODAMP=-0.5`、逐轨道 `ORTHY` 和
+`/home/workstation2/caltmp/mpi_tmp`。AS1、AS2 分别经过 29、33 轮并以退出码
+0 完成；`status.csv` 为 `status,complete`，没有 `METHOD=2` fallback。
+
+该开关只允许节点数向理论 `NNODEP` 靠近，原始 `SOLVE` 候选不再因尚未立即
+达到理论值而拒绝，且阻尼后检查使用了正确的新旧轨道方向。trace 显示：
+
+| 轨道 | 初始节点 | 最终节点 | 理论 `NNODEP` | 诊断行为 |
+| --- | ---: | ---: | ---: | --- |
+| `6s` | 6 | 5 | 5 | 前 3 轮阻尼后保持 6，第 4 轮恢复到 5 |
+| `5p-` | 3 | 3 | 3 | 第 3 轮原始候选 3→2，被 `nodes_progress` 拒绝一次 |
+| `5p` | 3 | 3 | 3 | 无最终节点变化 |
+| `5d-` | 3 | 2 | 2 | 第 4 轮恢复到理论值 |
+| `5d` | 3 | 2 | 2 | 第 4 轮恢复到理论值 |
+
+AS2 的最终 $^3F_J$ 顺序仍为 $^3F_4<{}^3F_3<{}^3F_2$，间隔为
+1375.88 和 916.11 cm$^{-1}$；相对 NIST 的 1332.164 和 884.39 cm$^{-1}$，
+误差分别为约 +43.72 和 +31.72 cm$^{-1}$。因此该实验验证了节点进度护栏、
+阻尼后检查方向修正和 46-rank LBL 流程的稳定性，但没有消除 Ni I 精细结构
+间隔的物理偏差，也不能单独作为最终生产修复。
+
+与 Job 587 比较，AS1 结果完全一致；AS2 最大能量差为
+`4.39×10^-7 Hartree`（约 `0.096 cm^-1`）。差异来自 `5p-` 的一次受控节点
+拒绝，最终节点计数和能级顺序没有改变。
+
+结果目录：`data/rmcdhf_test_data/results/ni-as1-as2-chain-590/`；日志：
+`data/rmcdhf_test_data/log/590_rmcdhf-ni-node-progress.log`。
+
+### Jobs 591–604：Ni/Ca-like、Cl I、Ni I 复测以及 B7/B8 状态选择
+
+本批 RMCDHF 作业（591–597、601–604）使用 46 个 MPI rank，B7 固定轨道
+RCI 作业（598–600）使用 1 个 rank。作业已经结束，但退出状态不能简单等同于
+“测试通过”，需要按计算本体和 wrapper 后处理分别判断。
+
+| 作业 | 输入/开关 | 计算结果 | 结论 |
+|---|---|---|---|
+| 591 | Ni/Ca-like，default-off | 第 11 轮附近达到旧脚本的 30 min runner 超时，`rmcdhf.exitcode=124` | 不是节点护栏失败；预算不足 |
+| 592 | Cl I，default-off，AS1→AS5 | AS1/AS2 分别 21/20 轮、退出码 0；AS3 exact-node guard 退出 137 | AS1/AS2 可重复，AS3 为预期护栏失败，AS4/AS5 未运行 |
+| 593 | Ni I，legacy exact-node guard | AS1 29 轮、退出码 0；AS2 连续拒绝 `6s`，退出码 1 | `status.csv` 标为 `expected_failure`，说明旧判据仍会拒绝合法节点修正 |
+| 594 | Ni/Ca-like，`GRASP_NODE_GUARD_PROGRESS=1` | 与 591 一样在第 11 轮附近以 124 结束 | 进度护栏尚未运行到收敛，不能据此评价护栏 |
+| 595 | Cl I，node-progress，AS1→AS5 | AS1/AS2 与 592 相同；AS3 连续 `nodes_progress` 拒绝，退出码 1 | 放宽为单向进度后仍不能完成 AS3，AS4/AS5 未运行 |
+| 596 | Ni I，node-progress 重复 | AS1/AS2 为 29/33 轮，退出码均为 0，`status=complete` | 与 Job 590 的 trace 逐字节一致，46-rank 流程具有重复性 |
+| 597 | Ni I，保存每轮 `rwfn.out` | AS1/AS2 为 29/33 轮，退出码均为 0，`status=complete` | 可用于定位 `SOLVE→DAMPOR→ORTHY` 的第一次状态差异 |
+| 598 | Ni I B7 固定轨道 RCI | 已生成 `b7_rci.csv` | `$^3F_3`、`$^3F_2` 间隔为 1297.15、2160.19 cm⁻¹，顺序正确 |
+| 599 | Ni/Ca-like B7 固定轨道 RCI | 已生成 `b7_rci.csv` | `$^3F_3`、`$^3F_4` 间隔为 1702.72、3746.95 cm⁻¹，低于 NIST 1880、4070 cm⁻¹ |
+| 600 | Cl I B7 固定轨道 RCI | 已生成 `b7_rci.csv` | $^2P_{1/2}-{}^2P_{3/2}=896.13$ cm⁻¹，接近 NIST 882.3515 cm⁻¹ |
+| 601 | Ni I B8 full ASF | 33 轮，退出码 0，`status=complete` | 能级与 Job 590 相同，$^3F_4<{}^3F_3<{}^3F_2$；full ASF 选择没有改变结果 |
+| 602 | Ni I B8 target ASF | RMCDHF 18 轮、退出码 0，顺序正确 | 间隔 1374.78、915.63 cm⁻¹；wrapper 只因 target 与 full 的 level 集合不同而比较失败 |
+| 603 | Ni/Ca-like B8 full ASF | 第 11 轮附近以 124 结束 | 仍是时间预算问题，不能评价 full ASF |
+| 604 | Ni/Ca-like B8 target ASF | 第 11 轮附近以 124 结束 | 仍是时间预算问题，不能评价 target ASF |
+
+Ni/Ca-like 早先的完整 46-rank 记录位于
+`data/rmcdhf_test_data/results/ndcof-ilast-20260905/np46/`，耗时约 2687 s
+（44 min 47 s）。这解释了 591、594、603、604 在 30 min 限制下的 124；它们
+的 trace 在前 11 轮基本一致，没有节点变化或 fallback。相关脚本已经改为 60 min，
+重跑后才能对 Ni/Ca-like 的进度护栏和 B8 状态选择作出结论。
+
+B7 的原始 wrapper 错误地给 `read_level_to_csv.py` 传入 `-gj`，而 RCI 只生成
+了 `b7.level`，没有 `b7.h`/`b7.ch`。去掉该选项后已生成三个 `b7_rci.csv`，上表
+数值可归档；对应修正后的 sbatch 脚本仍可重新提交以取得完整的自动化日志。
+Ni I B8 target 的后处理应使用 `GRASP_ALLOW_LEVEL_DIFFERENCES=1`，不能把 level
+集合差异误判为 RMCDHF 失败。
+
+Job 597 的波函数交叉检查显示，AS1 的 overlap/radius 相关系数为
+0.9731/0.99899，AS2 降为 0.8944/0.97848，且每轮波函数均已保留。结合 Job
+596 的逐字节重复性，当前主线应审计 AS2 新增轨道进入 MPI 优化后的状态传递；
+不能再把剩余的 Ni I 或 Ni/Ca-like 间隔偏差全部归因于节点护栏。B7 结果也表明
+固定轨道 RCI 对间隔的修正具有体系依赖性。Fe I 输入仍未补齐，因此尚不能声称
+四个体系的回归验证已经完成。
+
+## 结论分层与后续主线
+
+前期测试证据需要按定位价值区分。最重要的结果是：不优化轨道时，无论
+活性空间大小，能级顺序和谱项均正确；AS1 已有轨道的 `.w` 继承也正确；
+逐个优化 AS2 新增轨道仍会出错。因此根因应位于新增轨道进入
+`IMPROVmpi` 后的通用优化更新流程，而不是 RCI、Thomas–Fermi 初猜或某个
+轨道之间的特殊耦合。
+
+已确认的代码问题是 MPI 版 `IMPROVmpi` 遗漏 `ED1=PED(J)`，已在 Job 575
+前修复。该修复是必要的状态初始化修正，但 Job 575 仍出现 `5d-`、`5d`、
+`6s` 节点拒绝，说明它不是唯一根因。后续实验聚焦 LBL 的 MPI 优化路径，
+逐步核对阻尼、重试、MPI `DA/NDA` 汇总、轨道数组交换和正交化调用。
+
+节点相关测试的有效作用是排除错误方向：`MTP/MTP-10/MTP-20` 一致，排除
+外层截断；`THRESH` 矩阵证明统一全局阈值不可行；极值和 `COUNT_TRACE`
+说明 `COUNT` 是幅值筛选诊断，不等价于物理节点。它们不能解释能级顺序
+异常，因此不再作为主修复方向。初始轨道估计方法 A/B 也未改变“不优化
+正确、优化后错误”的事实，不能作为根因修复。
+
+后续主线改为逐步审计 `SETLAGmpi → SOLVE → IMPROVmpi → DAMPCK/DAMPOR →
+ORTHY → MATRIXmpi/NEWCOmpi` 的状态传递，记录 LBL MPI 路径中第一次出现
+异常的轨道、能量和径向数组状态。护栏只保留为诊断辅助，不能用放宽节点
+阈值替代优化流程修复。
