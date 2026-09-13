@@ -567,3 +567,612 @@ cm⁻¹，Cl I 为 896.13 cm⁻¹。它们与 RMCDHF 的差异说明 CI/RCI 和�
    数值对照；
 5. 补齐 Fe I 输入后再做跨体系回归，当前不能以 Ni I、Ni/Ca-like、Cl I 的
    结果宣称四体系验证完成。
+
+### QDIF 修复后的首个回归
+
+静态比较确认 `rmcdhf90_mpi/setlagmpi.f90` 曾删除同时变分轨道的
+`QDIF > 0.1` 分支，导致广义占据数相差很大的轨道对也使用 `OBQSUM` 公式。
+该分支已经按串行版及 `rmcdhf90_mem_mpi` 恢复。为保持单因素顺序，已构建
+不含后续 `MPI_Gatherv` 和稀疏索引修改的专用 `build-qdif/bin/rmcdhf_mpi`。由于
+Jobs 590、596、597 在该构建之前运行，它们只能作为旧 MPI 基线。
+
+首个单因素作业是
+`test/rmcdhf_orbopt/slurm/run_qdif_fix_ni_46.sbatch`：Ni I balanced，
+AS1→AS2，46 个 MPI rank，`ODAMP=-0.5`，node-progress 护栏和其余输入保持
+不变。只有该作业完成并与 Job 590/596 对比后，才能判断 QDIF 修复是否改变
+LBL 轨道优化；在此之前不应扩展到其他体系或宣称精细结构偏差已经修复。
+
+后续两个 Ni I 单因素脚本已经分别绑定到独立二进制：
+
+1. `run_gatherv_fix_ni_46.sbatch` 使用 `build-gatherv/bin`，只叠加
+   `MPI_Gatherv` 系数汇总修复；
+2. `run_sparse_index_fix_ni_46.sbatch` 使用当前 `build/bin`，在前两项基础上
+   叠加 `SPICMVmpi/INIESTmpi` 稀疏列索引修复。
+
+它们只能按上述顺序提交，且每一步都要与同一 Ni I AS1→AS2 输入的前一步比较
+`rmcdhf.exitcode`、`orbopt_trace.csv`、每轮波函数、最终节点、谱序和 NIST 间隔。
+
+为纳入外部验证目录中的 Fe I 成对数据，`run_data_case.sh` 现在支持可选的
+`GRASP_TEST_DATA_ROOT`，默认仍读取工作区 `data/rmcdhf_test_data/inputs`。
+新增的 `run_qdif_fix_fe_vv3_46.sbatch` 从
+`/home/workstation2/nvmesdd2T/rmcdhf_test_cal/Fe_I/e1_vv3` 读取优化输入，并
+从对应的 `_NV` 目录读取 `isodata`，不会复制 Fe I 的数 GB CSF 文件；计算结果
+仍写入工作区 `data/rmcdhf_test_data/results`。该脚本只运行 Fe I AS1→AS2，
+应在 Ni I QDIF 回归完成后提交，以保持单因素顺序。
+
+### 下一项待验证：`IMPROVmpi` 的 `NDA/DA` 可变长度汇总
+
+继续审计 `IMPROVmpi` 时发现，原 MPI 实现先用 `MPI_GATHER` 收集每个 rank
+的 `NDCOF`，随后却把 `ndcof_max` 作为所有 rank 的 `sendcount`。当某个 rank
+的实际 `NDCOF` 小于最大值时，这会从其 `NDA/DA` 数组的未初始化尾部发送数据；
+如果该 rank 的分配容量也小于最大值，还可能越过有效分配边界。合并循环虽然只
+消费每个 rank 报告的实际 `NDCOF` 项，但这些项的布局已经由固定步长发送决定，
+不能把这种发送方式视为安全的 padding。
+
+工作区已在
+`rmcdhf_test/src/appl/rmcdhf90_mpi/improvmpi.f90` 准备用 `MPI_Gatherv`：以
+各 rank 的实际 `NDCOF` 作为计数，以前缀和作为位移，再广播并合并唯一的
+`NDA/DA` 项。该修改已编译进当前正式 `build/bin/rmcdhf_mpi`，但尚未运行，
+不能与尚未提交的 QDIF 回归混用；
+QDIF 结果完成后，应以同一 Ni I AS1→AS2 输入单独验证这一汇总修复，再扩展到
+其他体系。
+
+### 新发现：稀疏矩阵 MPI 分块的列偏移错误
+
+继续对 `IMPROVmpi` 上游的 `MATRIXmpi → MANEIGmpi → SPICMVmpi` 路径做静态审计
+时，发现一个比轨道护栏更早发生的 MPI 算法错误。`src/lib/mpi90/spicmvmpi.f90`
+按 `ICOL=MYID+1,N,NPROCS` 处理跨步列，却把 `IBEG` 从上一个本 rank 的列延续到
+下一列。由于中间列属于其他 rank，下一次乘法实际应使用
+`IENDC(ICOL-1)+1:IENDC(ICOL)`；旧代码却从上一个本地列的尾部开始，读入被跳过
+列的非零元。`src/lib/mpi90/iniestmpi.f90` 有同样的模式：`JOFFSPAR` 只在本地
+列间更新，不能作为跨步列的全局稀疏偏移；每列必须使用
+`JCOL(J-1)+1:JCOL(J)`。
+
+用 8×8 对称稀疏矩阵的独立 Python 复算验证了这个静态结论：在 2、3、4 个
+rank 下，旧 `SPICMVmpi` 的最大矩阵向量误差分别为约 `1.95、3.81、4.79`，
+按每列端点修正后误差为机器精度；`INIESTmpi` 的 packed 矩阵在 2、3 个 rank
+下也分别出现非零元值错误，修正后与串行构造完全一致。1 rank 时旧路径恰好
+退化为正确的连续列，因此旧的单进程检查不能发现该问题。
+
+工作区已准备两个只改索引的源码修正，并已编译进当前正式
+`build/bin/rmcdhf_mpi`，但还没有数值回归：
+
+- `spicmvmpi.f90` 每个本地列重新计算 `IBEG=IENDC(ICOL-1)+1`；
+- `iniestmpi.f90` 每个本地列使用 `JCOL(J-1)+1` 作为稀疏起点。
+
+这两个修正已经编译进当前 `build/bin/rmcdhf_mpi`，但没有与 QDIF 或
+`MPI_Gatherv` 回归混用。它们仍应在 QDIF 和系数汇总两个单因素结果完成后，
+作为“MPI 稀疏矩阵索引”因素用同一 Ni I AS1→AS2 输入验证，再扩展到四个体系。
+
+### 外部 NVMe 成对数据的使用顺序
+
+四个体系的主要验证输入位于
+`/home/workstation2/nvmesdd2T/rmcdhf_test_cal`，不是工作区的小型夹具。显式
+设置 `GRASP_TEST_DATA_ROOT` 后，`run_data_case.sh` 使用以下目录和命名：
+
+| 体系 | 优化目录/前缀 | 不优化目录/前缀 |
+|---|---|---|
+| Ni I | `Ni_I/e1_vv2` / `e1_vv2` | `Ni_I/e1_vv2_NV` / `e1_vv2_NV` |
+| Ni/Ca-like | `Ni_Ca-like/e1_cv` / `e1_cv` | `Ni_Ca-like/e1_cv_NV` / `e1_cv_NV` |
+| Cl I | `Cl_I/o1_cc1` / `o1_cc1` | `Cl_I/o1_cc1_NV` / `o1_cc1_NV` |
+| Fe I | `Fe_I/e1_vv3` / `e1_vv3` | `Fe_I/e1_vv3_NV` / `e1_vv3_NV` |
+
+外部优化日志已核对其真实 varied list，尤其 Cl I 使用正号轨道列表，不能套用
+工作区 balanced 夹具的负号伙伴列表。外部归档已显示 Ni I、Ni/Ca-like 和 Cl I
+的优化谱序偏差，而 Fe I 优化 CSV 尚未归档；因此在 Ni I QDIF 单因素、
+`MPI_Gatherv` 单因素和稀疏索引单因素依次完成后，应对每个体系分别提交优化与
+不优化脚本，并用 `data/nist_levels/{Ni_I,Ni_Ca-like,Cl_I,Fe_I}.csv` 做同一套
+项、宇称和 J 匹配。不能用工作区夹具的结果代替这四组外部成对验证。
+
+对应的 AS1→AS2 外部脚本已经分别写出：
+
+- `run_external_ni_optimized_46.sbatch` / `run_external_ni_nv_46.sbatch`；
+- `run_external_nica_optimized_46.sbatch` / `run_external_nica_nv_46.sbatch`；
+- `run_external_cl_optimized_46.sbatch` / `run_external_cl_nv_46.sbatch`；
+- `run_external_fe_optimized_46.sbatch` / `run_external_fe_nv_46.sbatch`。
+
+这些脚本固定使用 46 个 MPI rank、`/home/workstation2/caltmp` 和当前正式
+`build/bin`，并关闭诊断护栏与额外阻尼以重现外部归档的优化/不优化输入语义。
+它们必须在三项 Ni I 单因素回归完成后再提交；脚本已经通过 `zsh -n`，但尚未
+提交 Slurm 作业。
+
+
+### Job 605 复盘：QDIF 回归被截断，不能进入下一因素
+
+2026-09-08 的 Job 605 使用 `build-qdif/bin/rmcdhf_mpi` 完成了 Ni I AS1，
+但 AS2 只运行到第 23 轮中间输出。AS1 的 `rmcdhf.exitcode=0`，最终顺序为
+$^3F_4 < {}^3F_3 < {}^3F_2$，累计间隔为 `1358.20` 和 `2276.86 cm⁻¹`，
+相对 NIST `1332.164` 和 `2216.550 cm⁻¹` 的误差为 `+26.036` 和 `+60.310
+cm⁻¹`。这与 Job 590/596 的 AS1 完全一致。
+
+AS2 目录没有 `rmcdhf.exitcode`、`status.csv`、最终 `*_rmcdhf.csv` 或非空
+`rmcdhf.sum`；`rmcdhf.stdout` 在最后一组 `ORBOPT SOLVE` 后结束。trace 的
+第 23 轮临时间隔约为 `1375.90/2291.95 cm⁻¹`（相邻间隔约 `916.05 cm⁻¹`），
+但这是未完成计算的快照，不能作为最终物理结果。与 Job 596 对照，前 23 轮
+已有的 `SOLVE → DAMPOR → ORTHY` 记录、`5p-` 一次节点进度拒绝以及能量轨迹
+没有观察到 QDIF 引起的差异；因此 QDIF 修复尚未被证实有效，也没有被证伪。
+
+由于当前会话不能访问 Slurm accounting socket，不能把缺少退出文件准确标成某个
+Slurm 终态；调试记录应使用“AS1 完成、AS2 未完成”分类。为防止再次被分区默认
+时限截断，当前 QDIF、`MPI_Gatherv`、稀疏列索引和四体系外部脚本都显式设置了
+`#SBATCH --time=02:00:00`。
+
+后续闸门保持严格顺序：
+
+1. 重新提交 `run_qdif_fix_ni_46.sbatch`，确认 AS1/AS2 均有退出码、`status.csv`、
+   最终 CSV、逐轮波函数和 `orbopt_summary.csv`；与 Jobs 590、596、597 比较
+   第一个不同的 Lagrange multiplier、候选轨道、节点、半径和最终间隔。
+2. 只有 QDIF 作业完整后，提交 `run_gatherv_fix_ni_46.sbatch`；只增加
+   `MPI_Gatherv`，其余输入、46 rank、模块和 NVMe 临时目录保持不变。
+3. 分析 Gatherv 完整结果后，提交 `run_sparse_index_fix_ni_46.sbatch`；验收
+   `SPICMVmpi/INIESTmpi` 修复对轨道、节点、谱序和 NIST 间隔的影响。
+4. 三个 Ni I 单因素都完成并归档后，再按“优化→不优化”成对提交外部 NVMe
+   脚本：Ni I、Ni/Ca-like、Cl I、Fe I。所有主验收仍只使用 MPI，统一以
+   `data/nist_levels` 的组态、项、宇称和 $J$ 匹配，不安排串行/MPI 数值对照。
+
+每一步都要把退出状态、是否完整收尾、首次差异轮次、最终节点、谱项与 J 顺序、
+相邻及累计间隔、NIST 偏差写回测试结果文档；超时、护栏预期失败和 wrapper 后处理
+失败必须分别标注，不能合并成物理算法结论。
+
+### Job 607 结论
+
+QDIF 回归已完整完成（AS1/AS2 exitcode 0，status complete，AS2 33 轮）。最终
+Ni I AS2 的 `³F4 < ³F3 < ³F2` 顺序和 `1375.88/2291.99 cm⁻¹` 累计间隔仍偏离
+NIST `1332.164/2216.550`（`+43.716/+75.440`）。与旧作业的优化轨迹未出现首次
+差异，因此 QDIF 单因素不能解释或修复该物理偏差。下一步按闸门提交
+`run_gatherv_fix_ni_46.sbatch`。
+
+### Job 608 结论
+
+MPI_Gatherv 单因素 AS1/AS2 完整成功，结果与 Job 607（QDIF）逐项一致：AS2 `³F4 < ³F3 < ³F2`，累计间隔 `1375.88/2291.99 cm⁻¹`，NIST 偏差 `+43.716/+75.440 cm⁻¹`。未发现首次差异轮次或轨道节点变化，Gatherv 修复未解决精细结构偏差。稀疏列索引修复回归 Job 609 已提交。
+
+### Job 609 结论
+
+稀疏列索引修复作业完整结束，但 AS1/AS2 能级映射严重异常（AS1 为 ³P2/³F2/⁵G2，AS2 为 ³F2/³P2/³P2），说明 `SPICMVmpi/INIESTmpi` 修改破坏了矩阵列索引语义。该结果归类为物理算法失败；外部四体系成对作业 Jobs 610–617 已提交，不能将 Job 609 视为通过。
+
+
+## 2026-09-10：Jobs 610–617 最终状态核查
+
+本节更新此前运行中/排队的记录。`sacct -X` 确认所有已提交作业均已结束：
+607/608/609 为 COMPLETED（0:0）；610/611/612/613/614/616 为 FAILED（1:0）；
+615/617 为用户取消（未运行）。没有 TIMEOUT。进程退出成功不能替代物理验收。
+
+| Job | 体系/模式 | 耗时 | AS1 rmcdhf.exitcode | 失败位置与证据 |
+|---|---|---|---|---|
+| 610 | Ni I 优化 | 00:00:06 | 137 | 输入读取失败：stdout 为 `Not an ISOtope Data File;`，结果目录 isodata 首行是路径文本与 `Atomic number:` 拼接；无 trace、sum 为 0 字节。后处理又因缺少 trace 报错，掩盖了原始输入失败。 |
+| 611 | Ni I 不优化 | 00:00:10 | 0 | AS1 单轮结束并生成 CSV，波函数交叉检查报 `fewer than two matching accepted orbital updates`；不优化模式与该检查不兼容。另有严重谱项/间隔异常，不能因修复 wrapper 就判为物理通过。 |
+| 612 | Ni/Ca-like 优化 | 00:00:13 | 0 | AS1 第 7 轮按能量判据结束、CSV 已生成；归档比较报 `(1, 0, +)` 能量 -1504.453130741 vs -1497.916938943 Eh。基态被标为 ¹D₂，谱明显异常。 |
+| 613 | Ni/Ca-like 不优化 | 00:00:10 | 0 | AS1 单轮结束并生成 CSV，同 611 的 accepted-updates 后处理失败；谱也异常。 |
+| 614 | Cl I 优化 | 00:54:17 | 0 | AS1 达 100 轮上限，stdout 为 `Maximum iterations in SCF Exceeded.`，末轮 orbital/energy/final 均 false；检查报最后 scf_end 非 final。CSV 虽生成，间隔为 71110370.95 cm⁻¹，组态异常，不是收敛结果。 |
+| 615 | Cl I 不优化 | 00:00:00 | — | 已取消，未运行。 |
+| 616 | Fe I 优化 | 00:00:07 | 137 | 输入读取失败：实际有 7 个 J 块，在第 7 块出现 `unable to decode 4s;`，随后 GETOLDWT 第 51 行读取权重时 EOF；rank 0 退出 2，其余 ranks 被终止。无 trace、sum 为 0 字节，后处理缺 trace 是次生错误。 |
+| 617 | Fe I 不优化 | 00:00:00 | — | 已取消，未运行。 |
+
+六个已运行外部结果目录均只有 AS1、没有 AS2，也没有顶层 `status.csv`。
+因此四体系外部 AS1→AS2 验收尚未完成，不能将现有 CSV 作为完整链通过证据。
+原始证据保存在 `data/rmcdhf_test_data/log/61*.log` 和各 `results/external-*/as1/`
+的 `rmcdhf.stdout`、`rmcdhf.exitcode`、`orbopt_trace.csv`（存在时）。
+
+后续使用用户已有外部 `_NV` 归档作为不优化参照，不重新提交不优化作业；611/613
+仅保留为本次失败诊断证据，不替代已有归档。本次只核查和记录，没有重新提交作业。
+优先补齐 Job 608→609 的首次差异与稀疏存储语义审计，随后修正输入生成和失败状态
+处理，再对候选修复进行 Ni I MPI 回归，通过后恢复外部优化验收。当前结果支持
+“稀疏索引修改后的构建发生严重回归”，尚不足以独立证明具体索引表达式的根因；
+此前直接断言具体代码语义已被证实破坏的措辞应以此处的证据边界为准。
+
+
+## 2026-09-10：失败作业脚本修正与定向重提交
+
+按用户要求仅重新提交 Ni I、Ni/Ca-like、Cl I、Fe I 的外部优化 AS1→AS2，
+不重复单因素回归，不重新计算已有 `_NV` 参照。runner 修正 Fe I 的七个 J 块
+选择为 `1-5 / 1-4 / 1-8 / 1-6 / 1-7 / 1-2 / 1-2`（34 个 ASF，AS1/AS2
+与外部 sum 一致）；Ni I 使用同体系 `_NV/isodata` 并检查核数据首行。
+外部脚本开启能量差报告模式，保留 CSF/能级集合和真实收敛检查；缺失 trace
+不再掩盖 rmcdhf 原始退出码。不优化模式跳过不适用的轨道更新交叉检查。
+每个作业记录二进制路径、SHA-256 和失败阶段，并在 caltmp 下使用 job 专属目录。
+
+本次明确改用已有 `build-gatherv/bin/rmcdhf_mpi`（Job 608 使用过的 QDIF +
+Gatherv 构建），避开 Job 609 中发生严重回归的稀疏索引构建。不改 Fortran 源码，
+也不把这个构建宣称为已通过四体系物理验收。Cl I 的 100 轮未收敛不能通过关闭
+检查来“修好”，此次仍保留未收敛判定，使用上述构建重新计算。
+
+提交前完成 bash/zsh 语法检查、四体系八套真实输入准备和归档 ASF/权重核对；
+准备目录为 `data/rmcdhf_test_data/results/script-preflight-20260910-165427/`，
+未启动 MPI。用 Job 612 已有 sum 验证能量差报告保留数值并正常返回。
+
+重提交编号：618 Ni I 优化、619 Ni/Ca-like 优化、620 Cl I 优化、621 Fe I 优化。均为 46 ranks / 46 CPU、02:00:00 时限；不优化作业未提交。
+
+### Jobs 618–621 结论（2026-09-11）
+
+输入和后处理修正后的四个外部优化作业均完整完成 AS1→AS2，退出码为 0。结果表明
+脚本故障已排除，但原始物理现象仍存在：Ni I AS2 保持 `³F2<³F3<³F4` 但间隔扩大
+到 `4243.88/8440.35 cm⁻¹`；Ni/Ca-like AS2 为 `³F2<³F4<³F3` 且两级仅
+`62.36/68.08 cm⁻¹`；Cl I 为正确 `²P1/2<²P3/2` 但间隔 `1521.60 cm⁻¹`；
+Fe I 保持 `⁵D` 顺序、AS2 累计间隔 `1137.60 cm⁻¹`。四项均与各自归档标签/CSF
+一致，不能把 archive comparison 通过误认为 NIST 物理验收通过。下一步只需将这些
+优化结果与已有 `_NV` 结果和 `data/nist_levels` 做最终量化对比，再决定代码修复；
+不应重复运行已完成的输入/单因素回归。
+
+## 18. 2026-09-11 方案复审：现方案不能单独解决根翻转和谱项跳变
+
+### 18.1 结论
+
+现方案适合作为“轨道候选数值稳定性 + MPI 数据路径”的诊断方案，不能作为
+“新增活性轨道优化后始终保持目标能级顺序和谱项”的充分修复方案。它目前主要
+约束的是轨道伙伴、节点、重叠、半径、阻尼和 SCF 停止条件，没有约束每个
+$J\pi$ 块中的 CI 根身份（root identity）。因此它最多可以减少一部分由轨道
+塌缩、节点错误或 MPI 数据损坏引起的错序，不能防止以下两种现象：
+
+1. 相邻 CI 根在优化过程中交换能量顺序，但物理态仍由连续波函数重叠定义；
+2. 强混合使某个态的主导组态/谱项改变，这可能是合法的物理混合，也可能是
+   错误的根跟踪，不能仅凭最终 CSV 的第一组 `LSJ` 标签区分。
+
+### 18.2 已有结果对方案能力的反证
+
+- B3/B4 在小型 Ni I、Ni/Ca-like 算例中可恢复部分 J 顺序，但 Ni I 的原始
+  候选重叠仍低至约 `0.028`、半径因子约 `8.6`，说明“伙伴成对 + 阻尼”并未
+  使候选轨道稳定。
+- Jobs 607/608 的 QDIF 与 MPI_Gatherv 单因素结果没有改变 Ni I 物理结果；
+  Job 609 的稀疏列索引修改反而产生 `³P/³F/⁵G` 等错误谱项，说明 MPI 修复
+  必须先有独立的稀疏矩阵单元测试，不能仅以作业 exitcode 为依据。
+- Jobs 618–621 虽均完成 AS1→AS2，但 Ni I AS2 的 `³F` 间隔扩大到
+  `4243.88/8440.35 cm⁻¹`，Ni/Ca-like AS2 变成 `³F2 < ³F4 < ³F3` 且两级
+  只有 `62.36/68.08 cm⁻¹`。这些结果说明“CSV/CSF 标签与归档匹配”和“物理
+  态身份及 NIST 间隔正确”是两件事。
+- 当前生产 trace 中常见 `convg_energy=true`、`convg_orbital=false`、
+  `convg_final=true`。这正是 `SCFmpi` legacy 的 OR 语义：加权总能量先收敛
+  即可退出，不能证明新增轨道和目标态已经稳定。
+
+### 18.3 现方案缺少的核心机制：CI 根跟踪
+
+必须把“能级序号”与“物理态身份”分开。对每轮 `MATRIXmpi/NEWCO` 产生的每个
+$J\pi$ 块，保存上轮目标 ASF 的 CI 向量，并计算当前与上轮的重叠矩阵；在同一
+$J\pi$ 块内用最大重叠的一一匹配确定根，而不是按能量排序或按固定 ASF 序号
+认定同一个态。每个目标态还要记录：
+
+- CI 向量重叠及匹配后的根编号；
+- 目标组态、项、宇称、$J$ 的 dominant-CFS/ASF 权重；
+- 与 AS1/上一 SCF 轮的轨道重叠、节点和平均半径；
+- 目标态的相邻及累计间隔。
+
+若能量顺序交换但 CI/轨道重叠连续，应记录为真实或近真实的 root crossing，
+并保持物理态标签；若重叠突然跌落、主导组态突变且没有可解释的近简并，则必须
+拒绝整轮轨道更新并回退。root assignment 本身是诊断信息，只有伴随低重叠或目标态
+身份不连续时才应触发回退；当前 trace 还需要记录这些身份指标才能完成这项判断。
+
+### 18.4 需要替换的最小修复主线
+
+1. **先做状态身份诊断，不先改阻尼参数。** 在 `NEWCOmpi` 后输出各 $J\pi$ 块
+   的 eigenvalue、CI 向量重叠匹配、目标组态权重和根交换事件。最终 CSV 的
+   `LSJ` 只能作摘要，不能作为根跟踪数据。
+2. **把轨道接受从单轨道改为可回退的 SCF 轮次。** 伙伴轨道、同 $\kappa$ 正交
+   化组和本轮所有新增活性轨道完成候选、阻尼、正交化后，再统一重建 CI；只要
+   任一目标态的根重叠、组态权重、节点或半径验收失败，就恢复整轮轨道和标量状态。
+   当前 `IMPROVmpi` 的单轨道回退无法阻止随后其他轨道改变 CI 根。
+3. **生产收敛必须为三重门槛：** 轨道判据 AND 加权能量判据 AND 目标态身份在
+   连续至少两轮稳定；不得用 legacy 的 OR 语义作为物理验收。`METHOD` fallback、
+   节点进度拒绝和整轮回退都必须被记录为未收敛事件。
+4. **区分数值修复和物理目标。** 若目标是“与 NIST 的间隔更接近”，需要固定的
+   state-specific/EOL 状态集合与权重，或在独立的 CI/RCI 阶段优化目标态；伙伴
+   检查和阻尼只能保证轨道更新较稳定，不能凭护栏强制产生 NIST 能级顺序。
+5. **MPI 修复单独验收。** `MPI_Gatherv` 和稀疏列修复必须先用 2/3/4 个 rank
+   的人工稀疏矩阵、packed 矩阵和非零元索引测试验证；这是库级正确性测试，不是
+   用串行生产计算替代 MPI 主验收。Job 609 的谱项损坏在此之前不能进入生产构建。
+
+### 18.5 缩小后的验证闸门
+
+不再重复完整 B0–B8 矩阵。使用一个能稳定复现根跳变的 Ni/Ca-like AS2、一个
+Ni I AS2 节点异常夹具和一个 Cl I AS1 倒序夹具，均走 46-rank MPI 生产路径：
+
+- baseline：现有不优化或已归档优化输入，保存每轮 CI/ASF 身份；
+- candidate：只加入根跟踪和整轮回退，其他输入、阻尼和 MPI 构建不变；
+- acceptance：两次独立完整运行中，目标态匹配无未解释的低重叠/组态突变，最终
+  轨道与三重收敛门槛通过；再报告 J 顺序和 NIST 偏差。
+
+只有这三个夹具同时通过，才能判断问题已从“会发生未跟踪的根翻转/轨道塌缩”
+降低为可解释的物理近简并。即使通过，也不能承诺所有原子和所有活性空间都保持
+NIST 顺序；那需要单独的状态选择和物理模型验证。
+
+### 18.6 当前方案的停止项
+
+在根跟踪、整轮回退和三重收敛门槛实现前，以下方向不应继续作为修复主线：重复
+外部优化/不优化作业、继续调 `ODAMP` 数值、放宽 `THRESH`、把最终 `LSJ` 排序
+当作状态身份，或把 Job 609 的稀疏索引修改作为生产修复。现有 Jobs 618–621
+只证明输入和 wrapper 已能完整运行，不能证明轨道优化缺陷已经解决。
+
+## 19. 关键现象复审：为什么固定 Thomas–Fermi 新轨道反而更接近 NIST
+
+### 19.1 这不是矛盾，而是变分目标与验收目标不同
+
+`rwfnestimate` 生成的 Thomas–Fermi 轨道在“不优化”路径中只是固定的相关轨道基底；
+它不进入新增轨道的 `SOLVE → DAMPOR → ORTHY` 更新。固定轨道仍可参与后续
+CI/EOL 矩阵，但不会获得独立的轨道松弛自由度。
+
+轨道优化所降低的是当前有限 CSF/EOL 空间中的总能量或加权总能量，并不保证每个
+$J$ 态的相对能量、精细结构间隔或 NIST 偏差同时降低。某个 $J$ 块若从新增轨道
+松弛中获益更多，就会出现总能量下降而精细结构变差的情况。固定 TF 轨道的误差
+可能在各 $J$ 态之间较均衡，甚至产生误差抵消，所以相对间隔更接近 NIST；这不是
+“初猜比收敛轨道更正确”的变分定理结论，而是有限空间和状态加权下的结果。
+
+### 19.2 对当前四体系证据的解释
+
+现有模式符合“新增轨道更新触发异常”的共同特征：不优化目录保持目标谱序且较
+接近 NIST，优化目录在 Ni I、Ni/Ca-like 和早期 Cl I 数据中出现倒序或塌缩；
+Fe I 虽保持顺序，间隔仍发生明显变化。Ni I AS2 初始 `5d/6s` 节点异常在
+读入波函数时已经可见，但固定 TF 轨道仍能得到正确谱，这说明初始轨道异常本身
+不是充分原因；危险步骤是其随后进入 `SOLVE/DAMPOR/ORTHY` 并改变共享轨道和 CI
+矩阵。
+
+因此需要同时考虑三种机制：
+
+1. **不平衡轨道松弛：** 新关联轨道对不同 $J$ 态的相关能贡献不相等，EOL 总能量
+   下降却扩大精细结构误差；
+2. **径向分支或轨道塌缩：** `SOLVE` 可能从 TF 轨道跳到错误节点/半径分支，
+   `ORTHY` 再把该变化传播到同 $\kappa$ 轨道；
+3. **CI 根和组态混合变化：** 优化后同一能量序号可能对应另一根，或主导组态
+   权重真正发生强混合。最终 `LSJ` 文本不能区分这三者。
+
+这也解释了为什么单独的伙伴成对、QDIF、MPI_Gatherv 或负阻尼不能作为充分修复：
+它们最多约束其中一部分轨道更新路径，不能保证目标态相对能量和 CI 根身份同时
+保持。
+
+### 19.3 最小判别实验（无需重复整套回归）
+
+后续只需要同一 Ni I AS2 和 Ni/Ca-like AS2 各做以下三个固定 MPI 生产路径：
+
+- **TF-freeze：** 保持现有 TF 新轨道，继续优化原有 spectroscopic 轨道；
+- **one-new-orbital：** 每次只允许一个新增轨道进入 `IMPROV`，记录第一次改变
+  能级间隔、节点、半径或 CI 根身份的轨道；
+- **fixed-orbital CI/RCI：** 对 TF 轨道和优化后轨道分别使用完全相同的固定轨道
+  CI/RCI 空间和状态集合，比较 CI 本身与 RMCDHF 自洽更新的差异。
+
+每个运行只需保存目标态的 CI 向量重叠、主导 CSF 权重、每个 $J$ 的能量和总
+EOL 能量。若 TF-freeze 正常而 one-new-orbital 在某个轨道立即失败，根因位于
+该新增轨道的求解/阻尼/正交化路径；若 fixed-orbital CI 已经正确而 RMCDHF
+更新后错误，根因位于轨道松弛或 EOL 状态权重；若 CI 本身也发生根交换，则还要
+加入上一节的 root tracking。
+
+### 19.4 实际生产策略
+
+在根身份跟踪、整轮回退和状态收敛门槛完成前，**固定新增 TF 轨道是合理的生产
+工作区方案**，因为它已经在现有验证集上提供了正确谱序和较好的相对间隔。它不能
+被称为轨道优化修复，也不能外推为所有元素的高精度结果；它是避免错误新增轨道
+松弛的保守运行模式。后续若要恢复新增轨道优化，应先通过上述最小判别实验，再
+决定采用成组、state-specific 或分阶段的受控优化。
+
+## 20. 定向轨道隔离测试（2026-09-11，Jobs 631/632）
+
+定向隔离脚本已经实际完成，而不是停留在预检。Job 631（Ni I）和 Job 632
+（Ni/Ca-like）均为 `COMPLETED 0:0`；每个变体的 `rmcdhf.exitcode=0`，结果目录
+分别为 `data/rmcdhf_test_data/results/orbital-iso-nii-631/` 和
+`data/rmcdhf_test_data/results/orbital-iso-nica-632/`。每个运行都满足
+`energy_converged=true`，但 `orbital_converged=false`，所以这里的“完成”仍是
+legacy 能量停止语义，不能当作轨道物理收敛通过。
+
+`freeze_new` 保留 AS1 的 varied list，只固定 AS2 新增轨道，不等同于已有的
+`_NV` 不优化基线。每个体系均使用同一 AS1 波函数，比较 `freeze_new`、`all_new`
+和逐个 `only-*` 变体；汇总器已修正 Ni I 的 NIST 零点为 `J=4`，并先将计算能级
+归一到计算的 `J=4` 再计算误差。
+
+Ni I 的所有变体最终都是 `J2 < J3 < J4`。`all_new` 的相对 `J=4` 间隔为
+`E3-E4=-4196.47`、`E2-E4=-8440.35 cm⁻¹`，相对 NIST 的误差为
+`-5528.63/-10656.90 cm⁻¹`；`freeze_new` 仍为错误顺序，不能替代 `_NV` 基线。
+`only-5d` 和 `only-6s` 分别出现 1 次接受后节点变化，`all_new` 首轮 `6s`
+重叠为 `0.04646`，`only-4f` 首轮 `4f` 重叠为 `0.02814`。这说明 Ni I
+的问题在单个新增轨道进入优化路径时就可以出现，不是只有多轨道同时更新才触发。
+
+Ni/Ca-like 的 `freeze_new` 和所有 `only-*` 变体均保持 `J2 < J3 < J4`，但
+相对 NIST 间隔偏小；`all_new` 在第 3 轮发生首次能量顺序变化，最终为
+`J2 < J4 < J3`，相对 `J2` 的间隔仅为 `E4-E2=62.36`、`E3-E2=68.08 cm⁻¹`。
+所有变体都没有低重叠或接受后节点变化。因此这里更符合多轨道 EOL/CI 根耦合或
+根身份变化，而不是单个轨道节点塌缩。
+
+这批结果完成了方案第 19.3 节所需的最小隔离判别：新增轨道更新是触发错误谱序
+的必要诊断轴，但现有 trace 仍没有 CI 向量重叠匹配，不能区分真实近简并和未跟踪
+的根交换。后续主线仍应是 CI 根跟踪、整轮轨道回退和轨道/能量/目标态身份三重
+收敛门槛；不再重复这些已完成的变体，也不把 `freeze_new` 称为轨道优化修复。
+
+## 22. 固定轨道 CI/RCI 成对对照（2026-09-11，Job 635）
+
+第 2 步已经完成。新增脚本
+`rmcdhf_test/test/rmcdhf_orbopt/slurm/run_fixed_orbital_rci_pair.sbatch`
+对 Ni I 和 Ni/Ca-like 各生成一套 AS2 Thomas–Fermi 波函数，再把它与 Jobs
+631/632 的 `all_new` 最终波函数分别送入完全相同的固定轨道 RCI。两套 RCI 使用
+相同的 AS2 CSF、相同的状态选择和相同的后处理；CSF 哈希分别为
+`4630ea1b...20fc38` 和 `5c82085a...95ec33`。结果目录为
+`data/rmcdhf_test_data/results/fixed-orbital-rci-pair-635/`，成对汇总在
+`pair_summary.csv`。需要保留一个输入边界：这批 TF 波函数来自 `_NV` AS1，
+而 631/632 的优化波函数继承的是各自优化 AS1，因此它不是严格的同一 AS1 对照，
+只能作为跨基线结果。
+
+| 体系/轨道 | 目标态顺序 | 第一间隔（cm⁻¹） | 第二间隔（cm⁻¹） | 相对 NIST 误差（cm⁻¹） |
+|---|---|---:|---:|---:|
+| Ni I，TF | `J4 < J3 < J2` | `E3-E4=1305.08` | `E2-E4=2168.02` | `-27.08 / -48.53` |
+| Ni I，优化后 | `J2 < J3 < J4` | `E3-E4=-4262.78` | `E2-E4=-8606.07` | `-5594.94 / -10822.62` |
+| Ni/Ca-like，TF | `J2 < J3 < J4` | `E3-E2=1833.33` | `E4-E2=4031.32` | `-46.67 / -38.68` |
+| Ni/Ca-like，优化后 | `J4 < J3 < J2` | `E3-E2=-102.85` | `E4-E2=-369.73` | `-1982.85 / -4439.73` |
+
+这组跨基线结果说明 `_NV` AS1 上的 TF AS2 与优化链最终轨道之间存在巨大差异，
+但不能把差异全部归因于 AS2 新轨道优化。Ni I 的固定 RCI 顺序与 RMCDHF `all_new`
+一致；Ni/Ca-like 的固定 RCI 为 `J4 < J3 < J2`，而 RMCDHF 为 `J2 < J4 < J3`，
+说明自洽 EOL 更新还会继续改变各 $J$ 态的相对移动。
+
+四个 RCI 的前三个态仍被标记为同一 `^3F_J` 谱项，主导 CSF 权重也保持在约
+`0.90–0.99`；这批数据没有证明目标态直接换成另一组态，也没有证明发生了 CI
+根编号交换。它证明的是更早、更基本的一点：优化后的轨道基组本身已经足以破坏
+能级顺序。严格的 AS2 归因需要保持 631/632 的 AS1 不变，再比较 TF AS2 与优化
+AS2；这一步见下一节。
+
+## 23. 同一 AS1 的严格 TF/优化 AS2 对照（Job 636）
+
+Job 636 使用 Jobs 631/632 各自保存的 `previous.w` 作为共同 AS1，运行
+`rangular_mpi → rwfnestimate` 只生成 AS2 TF 轨道，再运行与 Job 635 相同的固定
+RCI。已有的优化轨道 RCI CSV 直接复用，没有重复优化 RCI。结果目录为
+`data/rmcdhf_test_data/results/matched-tf-rci-636/`，能级分解在
+`decomposition_summary.csv`，AS1 基线变化在 `radial_as1_nii.csv`/
+`radial_as1_nica.csv`，AS2 变化在 `radial_nii.csv` 和 `radial_nica.csv`。
+
+| 体系/波函数 | 目标态顺序 | 第一间隔（cm⁻¹） | 第二间隔（cm⁻¹） |
+|---|---|---:|---:|
+| Ni I，`_NV` AS1 + TF AS2（Job 635） | `J4 < J3 < J2` | `1305.08` | `2168.02` |
+| Ni I，优化 AS1 + TF AS2（Job 636） | `J2 < J3 < J4` | `E3-E4=-1411.04` | `E2-E4=-2730.88` |
+| Ni I，优化 AS1 + 优化 AS2 | `J2 < J3 < J4` | `E3-E4=-4262.78` | `E2-E4=-8606.07` |
+| Ni/Ca-like，`_NV` AS1 + TF AS2（Job 635） | `J2 < J3 < J4` | `1833.33` | `4031.32` |
+| Ni/Ca-like，优化 AS1 + TF AS2（Job 636） | `J2 < J3 < J4` | `893.62` | `1953.59` |
+| Ni/Ca-like，优化 AS1 + 优化 AS2 | `J4 < J3 < J2` | `E3-E2=-102.85` | `E4-E2=-369.73` |
+
+严格配对后的结论是：Ni I 的错误顺序在 AS1 优化后、AS2 新轨道仍保持 TF 时
+已经出现；AS2 优化进一步把间隔推向错误分支。Ni/Ca-like 的 AS1 优化先保持
+顺序但显著压缩间隔，AS2 优化再造成反转。径向指标也只在新增 AS2 轨道上出现
+明显变化：Ni I 为 `4f/5d/5p/6s`，重叠分别约 `0.008/0.205/0.345/-0.082`；
+Ni/Ca-like 为 `5s–5g`，重叠约 `0.12–0.32`，平均半径缩小约 2.8–3.2 倍，且
+部分节点发生变化。相对于 `_NV` AS1，Ni I 的 AS1 `4d/5s` 重叠只有约
+`0.397/-0.670`；Ni/Ca-like 的 `4s–4f` 重叠约为 `0.865–0.957`。现阶段不能
+再把问题概括为“只要固定 AS2 新轨道就恢复正确谱序”；生产上应先固定经过验证
+的 AS1/TF 基线，再单独设计 AS1 与 AS2 的受控优化实验。
+
+## 24. 631/632 轨迹与 636 分解的离线合并（2026-09-11）
+
+没有重新提交作业。新增
+`rmcdhf_test/test/rmcdhf_orbopt/analyze_as1_as2_contributions.py`，直接读取
+631/632 的 `orbopt_trace.csv`、已有的 `ci_root_analysis/` 和 636 的
+`decomposition_summary.csv`，生成
+`data/rmcdhf_test_data/results/matched-tf-rci-636/as1_as2_contribution.csv` 与
+`as1_as2_contribution.md`。能级首次变化使用相对第 0 轮超过 `1 cm⁻¹` 的门槛；半径
+比定义为 `radius_candidate/radius_old`，同时给出对称半径因子。
+
+离线汇总得到三个关键结果：
+
+1. **Ni I 的单轨道路径在第 1 轮就改变精细结构间隔。** `only-4f` 的最低接受
+   重叠为 `0.0281`、最大半径因子为 `8.55`；`only-6s` 为 `0.0465/3.15`，并有
+   1 次节点变化；`only-5d` 为 `0.197/4.40`，也有 1 次节点变化；`only-5p`
+   的变化较小（`0.466/2.47`）。四个单轨道变体最后仍为 `J2<J3<J4`，因此
+   “新增轨道一进入优化就改变能级”已被逐轨道复现，但不能把所有变化归因于同一个
+   节点塌缩。
+2. **Ni/Ca-like 的单轨道变体没有造成目标态顺序反转。** `only-5s/5p/5d/5f/5g`
+   的最大半径因子约为 `1.84–2.78`，接受后节点变化均为零，最后都保持
+   `J2<J3<J4`；`all_new` 才在第 3 轮变为 `J2<J4<J3`。它的 CI 根向量最低匹配
+   重叠为 `0.9705`，第 1、3 轮出现全局能量排序变化，但 13 个变体均没有非恒等
+   CI 向量匹配。因此目前没有“CI 根编号交换”证据，Ni/Ca-like 更符合多轨道 EOL
+   能量重排或近简并耦合。
+3. **严格 AS1/AS2 归因保持不变。** 636 的固定 RCI 已显示 Ni I 在“优化 AS1+
+   TF AS2”时就已经倒序，AS2 优化只会继续放大错误间隔；Ni/Ca-like 则由优化
+   AS1 先压缩间隔，AS2 全量优化再触发反转。因而当前可执行的生产策略仍是固定已
+   验证的 AS1/TF 基线；恢复新增轨道优化前，必须实现整轮回退、目标态身份跟踪和
+   三重收敛门槛，并继续保留本离线报告作为验收输入。
+
+这一步已经足以决定下一步方向，不需要再重复 Jobs 631/632/635/636。后续代码工作应
+在现有 trace 上实现“候选更新→整轮接受/回退”的状态机，并以目标 $^3F_J$ 的
+CI 向量重叠和相对能量同时验收；若仅增加根编号重排检查，不能覆盖 Ni I 的 AS1
+已倒序情形。
+
+## 25. 整轮候选回退与身份门槛的代码实施（2026-09-11）
+
+本步已完成代码接入，尚未启用新开关运行生产作业，也没有重复 Jobs
+631/632/635/636。新增 `src/appl/rmcdhf90_mpi/orbopt_round_state.f90`，在每轮
+轨道更新前保存 `PF/QF`、轨道标量、CI 能量/向量、块平均能量、权重以及
+`ICCMIN/IATJPO/IASPAR`；`MATRIXmpi → NEWCOmpi` 后计算全局能量排序和每个
+$J\pi$ 块内的绝对 CI 向量重叠匹配。目标态顺序变化或最低重叠低于门槛时，恢复
+整轮状态、增加负阻尼、清除本轮收敛标志，并覆盖写回恢复后的
+`.w` 文件；超过回退次数上限则停止，避免错误状态被报告为收敛。
+
+`scfmpi.f90` 已将该状态机接在完整的轨道更新和重新对角化之后；严格收敛条件在
+启用整轮护栏时额外要求 CI 重叠连续稳定，允许高重叠的合法 root crossing。`orbopt_trace.f90` 增加 `round_decision` 事件，
+记录接受/回退、最低重叠、能量顺序变化、根匹配和回退次数。新增控制默认关闭，
+可通过 `GRASP_ROUND_ROLLBACK_GUARD`、`GRASP_ROUND_REJECT_ENERGY_ORDER`、
+`GRASP_MIN_STATE_OVERLAP` 和 `GRASP_MAX_ROUND_ROLLBACKS` 开启；默认关闭时不改变
+历史输入顺序和数值路径。
+
+验证只进行本地构建：加载 `mpi/openmpi-x86_64` 后，`cmake --build build -j2
+--target rmcdhf_mpi` 成功，且 `git diff --check` 无空白错误。该构建结果证明模块
+接口和链接完整，不等同于三个物理夹具已经通过；下一步应在不重复既有基线的前提下，
+用 Ni I、Ni/Ca-like 和 Cl I 三个最小夹具各运行一次新开关，检查 `round_decision`
+以及三重收敛日志，再决定是否扩大测试范围。
+
+## 26. Job 638：整轮回退护栏的首轮生产路径验证
+
+Job 638 使用 46 个 MPI rank、`GRASP_ROUND_ROLLBACK_GUARD=1`、
+`GRASP_ROUND_REJECT_ENERGY_ORDER=1`、`GRASP_MIN_STATE_OVERLAP=0.85`、
+`GRASP_MAX_ROUND_ROLLBACKS=3` 和严格收敛模式，结果目录为
+`data/rmcdhf_test_data/results/round-guard-minimal-638/`。这次测试的目的只是确认
+候选轨道状态不会在身份异常时继续写成最终结果，不能把保护性停止当作物理收敛。
+
+| 算例 | round_decision | 最低重叠 | 终止证据 | 最终 CSV |
+|---|---:|---:|---|---|
+| Ni I AS2 | 4（全部回退） | 0.154087 | 第 4 次回退超过上限，`ERROR STOP SCFmpi: round rollback limit exceeded` | 无 |
+| Ni/Ca-like AS2 | 4 回退、3 接受 | 0.071677 | 第 7 轮重叠 0.618559，再次回退后超过总上限 | 无 |
+| Cl I AS1 | 100（全部接受） | 0.999323 | 达到 100 轮上限，轨道和能量严格条件未同时满足 | 有 |
+
+Ni I 的四次回退均同时报告 `state_overlap+root_assignment`，说明旧候选与保存
+状态的最低 CI 向量重叠约为 0.15–0.18，且贪心匹配得到非恒等根分配。护栏在生成
+最终 `.w`/CSV 之前停止了计算。Ni/Ca-like 的前三轮最低重叠为 0.071677、
+0.105908、0.391092，随后三轮重叠升至 0.981732、0.881384、0.952346 而被接受；
+第 7 轮降至 0.618559 后又回退，说明状态机确实能接受恢复稳定的候选，也能阻止
+后续恶化。Cl I 没有回退、非恒等根匹配或能级顺序变化，但 100 轮末仍为
+`convg_orbital=false`、`convg_energy=false`，因此只是成功运行到上限。
+
+这批结果证明了“检测并拒绝危险整轮候选”的控制路径，尚未证明它能找到正确的
+物理解。Ni I 和 Ni/Ca-like 被安全停止而不是恢复收敛，下一步要在不放宽门槛的
+前提下分析候选失败的具体轨道、目标 $J\pi$ 块和根身份；若要恢复计算，必须先把
+能量顺序比较限定到目标态集合。CI 向量匹配现已改为每个 $J\pi$ 块内的
+Kuhn–Munkres 全局一一匹配，但 Job 638 的旧 trace 仍是此前的逐步贪心结果；
+全局跨 block 排序仍不能作为物理态顺序判据。
+
+Job 638 还暴露出报告层面的歧义：旧版汇总只记录 `runner_exit`，所以 Cl I 的
+`rmcdhf.exit=0`、已有最终 CSV 但严格检查失败被显示成 `runner_exit=1`。现已在
+`run_data_case.sh` 写出 `convergence_check.exitcode`，并让
+`run_round_guard_minimal_46.sbatch` 的状态表同时记录 RMCDHF 退出码和严格检查
+退出码，区分 `rmcdhf_failed`、`rmcdhf_success_strict_not_converged`、
+`strict_converged` 及后处理失败。该修改只改善状态分类，不改变数值路径。
+
+`orbopt_trace.csv` 也已增加 `round_accepted`、`round_order_changed`、
+`round_nonidentity`、`round_rollback_count`、`round_min_overlap` 以及对应控制
+参数的专用列；旧的通用收敛列不再承载回退语义。这个改动只改善可审计性，Job 638
+已有 trace 仍按旧列解释。全局块内能量判据和 CI 根身份跟踪完成前，不应扩大生产
+回归，也不应重复 Job 638 或把其三个结果作为顺序修复证据。
+
+## 27. 目标态范围修正与离线验收（2026-09-12）
+
+已继续实施目标态范围修正。`GRASP_ROUND_TARGET_STATES` 现在按
+`NEWCOmpi` 的 **1-based 全局 state index** 指定目标根；配置后，整轮最低 CI
+重叠只在目标根对应的当前行上作为回退门槛，未跟踪的辅助根仍保留完整
+Kuhn--Munkres assignment 诊断，但不会单独令整轮失败。目标态能量顺序仍通过
+同一 assignment 映射回旧根，因此目标态跨不同 $J\pi$ block 时也能比较其物理
+顺序。没有设置目标态时保持“所有根参与重叠门槛”的兼容行为；能级顺序拒绝在此
+情况下自动关闭，避免把全局 state index 顺序误当作物理排序。
+
+最小 46-rank 诊断脚本已给出当前夹具的默认范围：Ni I 和 Ni/Ca-like 使用
+`3,4,7`，Cl I 使用 `1,2`；ASF 选择变化时可分别通过
+`GRASP_ROUND_TARGET_STATES_NI_I`、`GRASP_ROUND_TARGET_STATES_NICA` 和
+`GRASP_ROUND_TARGET_STATES_CL_I` 覆盖。trace 的控制行记录目标态原始字符串，
+每个 `scf_end` 行新增 `round_identity_stable`，严格收敛检查据此验证三重门槛，
+并兼容没有该字段的旧 trace。
+
+新增 `test/rmcdhf_orbopt/test_round_state_logic.py`，离线覆盖恒等匹配、合法
+root 交换、非贪心矩阵的全局最优 assignment、跨 block 目标态顺序以及辅助根低
+重叠不触发目标门槛五个情形。执行 `python3 test/rmcdhf_orbopt/test_round_state_logic.py`
+已通过；更新后的 `rmcdhf_mpi` 也已重新本地构建成功。下一次只需提交一批带默认
+目标态范围的最小护栏作业，检查真实 trace 是否不再因非目标 block 的低重叠回退，
+再决定是否调整阈值或扩大算例。
+
+## 28. Job 639 复核：测试输入与 trace 输出缺陷（2026-09-12）
+
+Job 639 不能作为目标态护栏的有效验证。复核发现两个测试层缺陷：
+
+1. 脚本把 Ni I 和 Ni/Ca-like 的目标态误设为 `4,5,6`，这三个索引都属于
+   $J=3$ block；目标 $^3F_J$ 的全局 state index 应为 `3,4,7`，分别对应
+   $J=2,3,4$。Cl I 的 `1,2` 正确。
+2. trace 控制行把逗号分隔的目标态字符串直接写入 CSV 未加引号，导致
+   `compare_rmcdhf.py` 报 `inconsistent CSV schema`。因此 Cl I 虽然 RMCDHF
+   本身以退出码 0 完成，后处理仍被损坏的 trace 阻断；Ni 两个算例的
+   `round_decision` 可以读取，但不能作为完整验收证据。
+
+Job 639 的可用诊断仍显示：错误目标集合下，Ni I 四轮均因
+`energy_order+state_overlap` 回退；Ni/Ca-like 前三轮因低重叠回退，随后 32 轮接受，
+最终因 90 分钟超时退出 124；Cl I 100 轮均接受并达到 SCF 迭代上限。由于目标集合
+和 CSV 均有问题，这些现象不用于判断修复效果。
+
+现已修正：默认目标集合改为 `3,4,7`，trace 输出对含逗号字段使用 CSV 引号，
+状态表把 `convergence_check` 尚未生成正确分类为后处理失败，而不是严格收敛失败。
+修正后重新构建和离线测试已通过；下一次测试必须重新生成有效 trace 后再评价目标态
+护栏，不能复用 Job 639 的结果。
