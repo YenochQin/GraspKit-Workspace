@@ -12,7 +12,7 @@ This workspace contains four paired repositories that are developed together as 
 The top-level `graspkit-Workspace` repository records coordination files and exact submodule gitlinks. Do not copy submodule source into the parent repository or remove nested `.git` metadata. Make source changes inside the relevant submodule, commit and push them there, then return to the parent workspace and commit the updated gitlink.
 
 ## Build, Test, and Development Commands
-Start the day-to-day Python environment from `graspkit-tools/`. Its `uv` environment installs `grasp-kit` editable from `../graspkit` and includes the pipeline dependencies such as `rcsfs` and Streamlit. Do not debug `graspkit/` with a separate `graspkit/.venv`; scripts run under that environment will miss Tools-only dependencies.
+All repositories in this workspace must use the single Python environment at `graspkit-tools/.venv`, created and synchronized by `uv` from `graspkit-tools/`. This applies to `graspkit`, `graspkit-tools`, `rCSFs`, and `nist_data`, including their tests, lint/type checks, Python packaging, and Maturin/PyO3 commands. Do not run `uv venv` or `uv sync` in sibling repositories and do not create, activate, or use per-repository `.venv` directories. The Tools environment installs `grasp-kit` and `nist-data` editable and includes `rcsfs`, Streamlit, and the shared development tools.
 
 ```bash
 cd graspkit-tools
@@ -20,24 +20,24 @@ uv sync
 source .venv/bin/activate
 ```
 
-Use `uv run <cmd>` instead of activation when convenient. On CUDA hosts that need GPU PyTorch wheels, run `uv sync --no-group cpu --extra gpu`.
+From `graspkit-tools/`, use `uv run <cmd>` instead of activation when convenient. From a sibling repository, activate `../graspkit-tools/.venv` before running commands; for a single non-interactive Python command, calling `../graspkit-tools/.venv/bin/python` directly is also valid. Do not run `uv run` from a sibling project because uv may select or create that project's environment. On CUDA hosts that need GPU PyTorch wheels, run `uv sync --no-group cpu --extra gpu` in `graspkit-tools/`.
 
-When debugging `graspkit/` or `graspkit-tools/`, use the `uv` environment inside `graspkit-tools/`. Edits under `graspkit/src/...` are picked up immediately because of the editable install. When debugging `rCSFs/`, use the `uv` environment inside `rCSFs/`, because that repository owns the Rust/PyO3 extension build and local extension test loop.
+Edits under `graspkit/src/...` and `nist_data/src/...` are picked up immediately because of the editable installs. Work in `rCSFs/` for its Rust sources and build outputs, but run Maturin, PyO3, Cargo tests, and Python tests through the shared `graspkit-tools/.venv`; `rCSFs` does not own a separate Python environment.
 
-For Rust tests inside `rCSFs/`, run `uv run cargo test` rather than bare `cargo test`. PyO3 should link against the uv-managed Python 3.14 runtime; bare Cargo may discover a system Python such as Xcode's Python 3.9 on macOS and fail at link time with `library 'python3.9' not found`.
+For Rust tests inside `rCSFs/`, first activate `../graspkit-tools/.venv`, then run `cargo test`. PyO3 must link against the Python 3.14 runtime exposed by the shared venv; Cargo without that activated environment may discover a system Python such as Xcode's Python 3.9 and fail at link time with `library 'python3.9' not found`.
 
-On Windows, or on any platform where Rust/C extension builds need an external compiler/linker environment, initialize that environment before `uv sync` or any compile step that touches `rCSFs/`. For example, this Windows machine uses nushell with an `msvc` function in the shell config; run `msvc` first so the shell can find MSVC tools such as `link.exe`, then run `uv sync`, `uv run maturin build --release`, or related build commands from `rCSFs/`.
+On Windows, or on any platform where Rust/C extension builds need an external compiler/linker environment, initialize that environment before `uv sync` or any compile step that touches `rCSFs/`. For example, run `msvc` first so the shell can find MSVC tools such as `link.exe`, run `uv sync` in `graspkit-tools/`, activate its `.venv`, then run `maturin build --release` from `rCSFs/`.
 
 - `git clone --recurse-submodules https://github.com/YenochQin/graspkit-Workspace.git GraspKit-Workspace`: clone the workspace and all accessible submodules.
 - `git submodule update --init --recursive`: initialize submodules after a normal clone.
 - `git submodule status`: show pinned submodule commits.
 - `git submodule update --remote <path>`: advance a submodule to the latest commit on its configured branch, then commit the changed gitlink in the parent repository.
-- `uv run pytest`: run the active project test suite.
-- `uv run ruff check .`: run lint checks.
+- `uv run pytest ../graspkit/tests ../nist_data/tests` from `graspkit-tools/`: run sibling Python tests with the shared environment; use repository-specific arguments as needed.
+- `uv run ruff check . ../graspkit ../nist_data` from `graspkit-tools/`: run lint checks with the shared environment; narrow the paths to the affected repository when practical.
 - `uv run basedpyright ../graspkit/src` from `graspkit-tools/`: type-check the developer package.
 - `uv run basedpyright ml_CSFs_selection_scripts pyscript` in `graspkit-tools/`: type-check tool code.
-- `uv run python -m build` or `python build_package.py --clean` in `graspkit/`: build package artifacts.
-- `uv run maturin build --release` in `rCSFs/`: build platform wheels before copying or resolving them into the Tools environment. `maturin` is installed in the uv-managed Python environment; use `uv run` unless `.venv` is already activated.
+- `python -m build` or `python build_package.py --clean` in `graspkit/` after activating `../graspkit-tools/.venv`: build package artifacts.
+- `maturin build --release` in `rCSFs/` after activating `../graspkit-tools/.venv`: build platform wheels with Maturin and Python from the shared Tools environment.
 
 ## Cross-Repo Coupling
 `graspkit-tools/pyproject.toml` declares `grasp-kit` as an editable local dependency at `../graspkit`, `nist-data` as an editable local dependency at `../nist_data`, and `rcsfs` as a path dependency at `../rCSFs` via `[tool.uv.sources]`.
@@ -48,13 +48,14 @@ On Windows, or on any platform where Rust/C extension builds need an external co
 - Editing Rust code in `rCSFs/` requires rebuilding before changes are visible in the Tools venv:
   ```bash
   cd rCSFs
-  uv run maturin build --release
+  source ../graspkit-tools/.venv/bin/activate
+  maturin build --release
   cd ../graspkit-tools && uv sync
   ```
-- For tight iteration on `rcsfs` itself, work inside `rCSFs/` with `uv run maturin develop`, then build a release wheel once changes are stable.
+- For tight iteration on `rcsfs` itself, activate `../graspkit-tools/.venv` and run `maturin develop` from `rCSFs/`, then build a release wheel once changes are stable.
 - Both Python projects require Python >= 3.14 and pin `torch==2.10.0` / `torchvision==0.25.0` through CPU/GPU extras. The GPU extra uses the official PyTorch CUDA index; the CPU environment resolves through the configured Tsinghua/Aliyun mirrors. On macOS the GPU extra is marker-disabled in Tools.
 
-When a change touches multiple repositories, develop API/algorithm changes in `graspkit/`, Rust extension changes in `rCSFs/`, NIST ASD parsing changes in `nist_data/`, and orchestration/config integration in `graspkit-tools/`. There is no top-level build spanning all four projects. Each repository has its own `pyproject.toml`, lockfile, lint/type config, tests, and local `.venv`; day-to-day pipeline work uses the `graspkit-tools` venv, while per-repo venvs are for that repository's own tests.
+When a change touches multiple repositories, develop API/algorithm changes in `graspkit/`, Rust extension changes in `rCSFs/`, NIST ASD parsing changes in `nist_data/`, and orchestration/config integration in `graspkit-tools/`. There is no top-level build spanning all four projects. Each repository retains its own source, build metadata, lint/type config, and tests, but all Python tooling and PyO3 builds use only `graspkit-tools/.venv`; per-repository Python environments are unsupported.
 
 The normal end-to-end flow is calculation -> descriptors -> ML training -> CSF selection -> re-validation. It is orchestrated from `graspkit-tools/ml_CSFs_selection_scripts/`, configured via `config.toml`, validated with `uv run python ml_CSFs_selection_scripts/csfs_ml_choosing_config_load.py validate -f config.toml`, and submitted through `run_script/`. The `train` step imports ML modules from `graspkit`; failures there often require fixes in `graspkit/src/graspkit/ml_module/`. Descriptor generation calls into `rcsfs`; failures involving CSF parsing, Parquet I/O, or descriptor normalization usually require changes in `rCSFs/src/` or `rCSFs/rcsfs/`.
 
@@ -62,7 +63,7 @@ The normal end-to-end flow is calculation -> descriptors -> ML training -> CSF s
 Use Python 3.14+, 4-space indentation, and explicit type hints for public functions. Prefer `pathlib.Path`. Use `snake_case` for modules, functions, variables, and TOML keys; `PascalCase` for classes and Pydantic models; `UPPER_SNAKE_CASE` for constants. Ruff uses `NPY201`; formatting uses double quotes.
 
 ## Testing Guidelines
-Tests use `pytest`. Add new tests under each project's `tests/` directory with filenames `test_*.py` and functions named `test_*`. Include realistic sample inputs for loaders, parsers, config normalization, and ML pipeline behavior. Run `uv run pytest` before submitting changes, plus the repository-specific Rust or type-check commands when the affected project needs them.
+Tests use `pytest`. Add new tests under each project's `tests/` directory with filenames `test_*.py` and functions named `test_*`. Include realistic sample inputs for loaders, parsers, config normalization, and ML pipeline behavior. From `graspkit-tools/`, run `uv run pytest` with the relevant sibling test paths; alternatively activate `graspkit-tools/.venv` and run the checks from the source repository. Add repository-specific Rust or type-check commands when the affected project needs them.
 
 ## Commit & Pull Request Guidelines
 Git history includes short subjects such as `update ...`, `bug fix`, and scoped messages like `fix: clear inherited venv state...`. Prefer concise, scoped, imperative subjects, for example `data_IO: fix binary loader bounds`. For workspace-only changes, use subjects such as `workspace: update graspkit submodule`. PRs should include purpose, affected paths, test results, linked issues, and screenshots for UI changes.
