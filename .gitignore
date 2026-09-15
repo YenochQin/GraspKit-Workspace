@@ -15,5 +15,10 @@
 /doc/*
 !/doc/rmcdhf_test/
 /doc/rmcdhf_test/*
+!/doc/rmcdhf_test/cal-report-analysis-cal-report-analysis-ni-ca-like-2026-08-19.md
+!/doc/rmcdhf_test/cal-report-analysis-cl-i-lbl-orbital-optimization-2026-08-18.md
+!/doc/rmcdhf_test/nuclear-polarization-potential-neutral-atom-grasp.md
+!/doc/rmcdhf_test/rmcdhf90.md
 !/doc/rmcdhf_test/rmcdhf90_mpi_轨道优化调试方案.md
 !/doc/rmcdhf_test/rmcdhf90_mpi_轨道优化代码核查.md
+!/doc/rmcdhf_test/rmcdhf90_mpi_轨道优化测试结果.md
