@@ -30,7 +30,7 @@ On CUDA hosts that need GPU PyTorch wheels, use `uv sync --no-group cpu --extra 
 
 Edits inside `graspkit/src/...` are picked up immediately by this environment because of the editable install — no reinstall needed.
 
-On Windows, or on any platform where Rust/C extension builds need an external compiler/linker environment, initialize that environment before `uv sync` or any compile step that touches `rCSFs/`. For example, run `msvc` first so the shell can find `link.exe`, run `uv sync` in `graspkit-tools/`, activate the Tools venv, then run `maturin build --release` from `rCSFs/`.
+On Windows, or on any platform where Rust/C extension builds need an external compiler/linker environment, initialize that environment before `uv sync` or any compile step that touches `rCSFs/`. For example, run `msvc` first so the shell can find `link.exe`, then run `uv sync` in `graspkit-tools/` — that sync is what compiles the `rcsfs` extension.
 
 ## Cross-Repo Coupling
 
@@ -39,14 +39,21 @@ On Windows, or on any platform where Rust/C extension builds need an external co
 - The repos must sit side-by-side under this workspace directory, and the Tools repo expects the Kit repo at `../graspkit`. The actual directory is named `graspkit` (CamelCase) — this resolves on case-insensitive filesystems (default macOS APFS) but **will break on case-sensitive Linux**. If running into a missing-path error from `uv sync` inside `graspkit-tools/`, symlink or rename so a lowercase `graspkit` path exists. The same applies to `rCSFs/` if any tooling references it as `rcsfs`.
 - Editing `graspkit/src/...` is immediately visible to `graspkit-tools` (no rebuild needed) once `uv sync` has been run in Tools.
 - Editing `nist_data/src/...` is immediately visible to `graspkit-tools` (no rebuild needed) once `uv sync` has been run in Tools.
-- **`rcsfs` is a path dependency** pointing at `../rCSFs`. Editing Rust code in `rCSFs/` requires a rebuild before changes are visible in the Tools venv:
+- **`rcsfs` is a path dependency** pointing at `../rCSFs`. Editing Rust code in `rCSFs/` requires a rebuild before changes are visible in the Tools venv, and `uv sync` is that rebuild:
+  ```bash
+  cd graspkit-tools && uv sync   # rebuilds and reinstalls rcsfs from ../rCSFs
+  ```
+  `rCSFs/pyproject.toml` uses the Maturin build backend and lists `src/**/*.rs` in `[tool.uv] cache-keys`, so `uv sync` notices Rust edits, rebuilds the wheel under PEP 517 build isolation, and reinstalls it. Build isolation downloads Maturin into a throwaway environment, so **Maturin is intentionally not installed in the shared venv and must not be added to it** — `maturin develop` is not part of this workflow. Maturin is declared only in `rCSFs/`'s own `dev` group, because building a redistributable wheel is the one task scoped to that repository alone; run it without creating a second environment:
   ```bash
   cd rCSFs
-  source ../graspkit-tools/.venv/bin/activate
-  maturin build --release # produces dist/rcsfs-<ver>-cp314-...whl
-  cd ../graspkit-tools && uv sync   # pick up the rebuilt wheel
+  uvx --from 'maturin>=1.14,<2.0' maturin build --release \
+    --interpreter ../graspkit-tools/.venv/bin/python
   ```
-  For tight iteration on `rcsfs` itself, activate the shared environment and run `maturin develop` inside `rCSFs/`, then rebuild only once changes are stable.
+  Rust-only iteration (`cargo build`, `cargo test`) needs no wheel at all; just activate the Tools venv so PyO3 finds its Python 3.14 runtime. Note that `rCSFs`' own `pytest` suite does **not** read the installed wheel — `[tool.maturin] python-source = "."` makes the repo root the package root, so running tests from `rCSFs/` imports the in-tree `rcsfs/` and shadows site-packages. Refresh that copy separately:
+  ```bash
+  cd rCSFs && cargo build --release --features pyo3/extension-module
+  cp target/release/lib_rcsfs.so rcsfs/_rcsfs.cpython-314-x86_64-linux-gnu.so
+  ```
 - Both projects require Python ≥ 3.14 and pin `torch==2.10.0` / `torchvision==0.25.0` via `cpu` / `gpu` extras. The `gpu` extra routes through the official PyTorch CUDA index; `cpu` resolves via the configured Tsinghua/Aliyun mirrors. On macOS the GPU extra is marker-disabled in Tools.
 
 ## Working Across Both Repos
