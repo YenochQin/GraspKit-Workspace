@@ -17,11 +17,32 @@ Thomas--Fermi（TF）初始轨道出发后，balanced 的 `nl-/nl` 相对论伙�
 禁止据此强制能序或重排本征根。
 
 截至 2026-09-16，输入完整性、候选轨道检查、严格收敛、整轮回退和 AS 发布事务已经
-存在；partner-group 原子更新事务也已在当前未提交工作树中实现，并通过 1/2/4/46 rank、
-故障恢复、重试上限和三体系 AS1 程序级回归。`GRASP_REQUIRE_BALANCED_PAIR` 仍只检查
-varied-list 完整性；共同前态、共同阻尼和共同接受/拒绝由独立的
+存在；partner-group 原子更新事务已在 `rmcdhf_test` 提交 `eefa521` 中实现，并通过
+1/2/4/46 rank、故障恢复、重试上限和三体系 AS1 程序级回归。`GRASP_REQUIRE_BALANCED_PAIR`
+仍只检查 varied-list 完整性；共同前态、共同阻尼和共同接受/拒绝由独立的
 `GRASP_PAIR_TRANSACTION=1` 开启。**最终数值目标仍未完成**，因为第 5 节逐 AS 物理验收
 尚未完成。
+
+**2026-09-16 编排层修复**：第 5 节的生产入口
+`graspkit-tools/scripts/grasp_regular_cal/run_orbopt_stage.py`（由
+`generate_grasp_regular_scripts.py` 生成的 `mcdhfmpi.sh` 逐 AS 调用）在
+partner-group 事务实现之前就已存在，其 `rmcdhf_environment()` 一直没有设置
+`GRASP_PAIR_TRANSACTION`，`REQUIRED_RMCDHF_CAPABILITIES` 也不检查这个 capability。
+也就是说，在此次修复前，即使 Fortran 侧事务已经实现并通过回归，任何经这条生产路径
+提交的 AS 运行仍会静默退回旧的逐轨道顺序更新路径。现已在该函数中补充
+`GRASP_PAIR_TRANSACTION="1"`、`GRASP_MAX_PAIR_RETRIES="3"`，并把
+`GRASP_PAIR_TRANSACTION` 加入 `REQUIRED_RMCDHF_CAPABILITIES`（未声明该 capability
+的可执行文件会在启动前被拒绝，而不是静默退回）；`graspkit-tools/tests/test_run_orbopt_stage.py`
+增补了对应断言。离线验证：
+`graspkit-tools/.venv/bin/python -m pytest tests/test_run_orbopt_stage.py tests/test_orbopt_stage_guard.py tests/test_grasp_regular_orbopt_generator.py`
+（15 项全部通过，不提交任何集群作业）。
+
+`test/rmcdhf_orbopt/run_data_case.sh` + `GRASP_STAGE_TRANSACTION=1` 这条路径是
+`STAGE_GUARD_IMPLEMENTATION.md` 中明确标注的"archived-data regression adapter"，
+不是面向新 AS 运行的生产入口；其 GRASP_* 环境变量由调用方（sbatch 脚本）逐一显式
+导出，本次未修改任何已提交的 `.sbatch` 文件。对这条路径做同样等价的运行，需要调用方
+自行在 `env VAR=...` 列表中加入 `GRASP_PAIR_TRANSACTION=1`（见测试结果文档第 8 节
+"pair-smoke" 系列运行的做法）；这不是本仓库范围内的代码修改。
 
 ## 2. 当前结果为什么能恢复正确顺序
 
