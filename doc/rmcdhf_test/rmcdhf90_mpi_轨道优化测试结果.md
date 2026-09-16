@@ -11,6 +11,10 @@ $(n,l)$ 的 `nl-/nl` 都进入 varied list，从而消除原始正号 `nl` 单�
 普遍提高 NIST 精度；Ni I Job 645 和 Cl I balanced 结果仍略劣于各自 fixed-TF/
 no-varied 基线。
 
+截至 2026-09-16，partner transaction 已在当前未提交工作树中实现并通过程序级回归：
+伙伴候选从同一快照生成、使用共同阻尼、共同通过 post-`ORTHY` 检查后原子提交，失败时
+整个组恢复并在同一快照上重试。该结论只补齐了算法语义证据；尚未替代逐 AS 物理验收。
+
 ## 2. B1/B2/B3：伙伴选择的单因素证据
 
 B1 只选择正号 `nl`，B2 只选择 `nl-`，B3 同时选择两侧；同一行内其余输入保持一致。
@@ -35,7 +39,8 @@ B1 只选择正号 `nl`，B2 只选择 `nl-`，B3 同时选择两侧；同一行
 保持 `^5D_J` 顺序，进一步限制了结论强度。
 
 B3 并未消除 Ni I 的低 overlap、大半径变化和节点变化，说明 varied-list 完整性影响
-精细结构平衡，却不等于候选轨道已经稳定，更不等于伙伴联合数值更新已经实现。
+精细结构平衡，却不等于候选轨道已经稳定。该组历史 B3 数据产生于 partner transaction
+实现之前，不能反向作为原子事务证据；新事务证据见第 8 节。
 
 权威精简表位于
 [`rmcdhf_test/test/rmcdhf_orbopt/RESULTS.md`](../../rmcdhf_test/test/rmcdhf_orbopt/RESULTS.md)。
@@ -131,16 +136,39 @@ TF 对照见
 | QDIF / Gatherv | 单因素物理结果未改善 | 保留正确性修复，不作因果解释 |
 | 稀疏列全局偏移修改 | Job 609 谱项严重损坏，后续已纠正为 rank-local 偏移 | 错误实验不得作物理证据 |
 
-## 8. 尚缺的证据
+## 8. Partner transaction 程序级证据（2026-09-16）
 
-当前程序没有 partner transaction，因此尚无运行能证明：两个伙伴从同一前态生成候选、
-使用共同阻尼、post-`ORTHY` 后同时接受或同时恢复。B3/Job 645 只能证明“完整 varied
-list + 顺序逐轨道更新”在这些夹具上的结果。
+当前未提交工作树以 `GRASP_PAIR_TRANSACTION=1` 显式开启事务，默认关闭时仍执行已修正的
+legacy 逐轨道路径。
 
-下一轮有效证据必须来自实现后的 pair transaction，并要求每个 AS 的直接优化候选同时
-通过能序、身份、严格收敛、NIST 预设容差和“不劣于 TF”门槛。fallback 结果不计成功。
+| 验证 | 结果 | 结果目录 |
+|---|---|---|
+| CTest | 4/4 通过 | 构建树内测试 |
+| Ni I AS1，1 rank | 51 个 schedule 最终全部 commit；1 次节点失败整组 rollback 后以 0.5 重试成功 | `pair-smoke-final-ni-20260916000500` |
+| Ni/Ca-like AS1，1 rank | 28 个 schedule 全部 commit | `pair-smoke-final-nica-20260916000500` |
+| Cl I AS1，1 rank | 36 个 schedule 全部 commit | `pair-smoke-final-20260915235000` |
+| Cl I，1/2/4 rank | 决定序列完全相同；最终两级能量按 CSV 精度最大差 0.0 | `pair-smoke-final-20260915235000`、`pair-final-rank2-flush-20260916004000`、`pair-final-rank4-flush-20260916004000` |
+| Cl I，46-rank production | runner/求解器均为 0；与 1/2/4 rank 的 36 个决定及最终能量完全相同 | `pair-final-prod46-cl-20260916010000` |
+| post-`ORTHY` 故障 | 同一 schedule/snapshot rollback，再以 0.5 commit；`rmcdhf.exitcode=0` | `pair-final-post-orthy-20260916002000` |
+| 持续故障/上限 | 同一 schedule/snapshot 记录 0.5、0.7 两次 rollback，随后 `MPI_Abort(92)` | `pair-final-retry-flush-20260916003000` |
+| 默认关闭 | `rmcdhf.exitcode=0`，无 pair event，capability 未置真 | `pair-default-final-20260915231500` |
+| `NSIC/MAXARR` | 测试专用 override 使额外 schedule 包含所选轨道的完整 group | `pair-nsic-cl-20260915232500` |
 
-## 9. 复现记录的最小字段
+所有成功运行的 `orbopt_trace.csv` 都是固定 93 列且无溢出字段。Ni I 的自然
+`nodes_expected` 失败和 post-`ORTHY` 注入共同证明：事务会整组恢复后在原 snapshot
+上重新生成两个候选，不会只接受一侧。
+
+`run_data_case.sh` 在部分运行的后处理末端返回 1，是因为当前二进制为 `NNNP=2990`，
+归档参考为 590，比较器按设计拒绝未声明的径向网格比较。这里以结果目录中的
+`rmcdhf.exitcode=0`、完整 trace 和 level CSV 判定求解器成功。
+
+## 9. 尚缺的物理证据
+
+程序级事务已具备，但尚无证据证明三体系的**逐 AS 直接优化候选**全部满足最终目标。
+下一轮必须从正确 anchor 逐层执行，并在每层同时验证能序、目标身份、严格收敛、重复性、
+运行前冻结的 NIST 容差和“不劣于同层 fixed-TF/RCI”。fallback 结果不计成功。
+
+## 10. 复现记录的最小字段
 
 每次保留：`isodata`、实际 `rcsf.inp`、上一 AS 与 TF `rwfn`、完整 stdin、状态选择和
 权重、源码提交、可执行文件 SHA-256、`NNNP`、编译器/MPI/BLAS、rank/thread 绑定、全部
