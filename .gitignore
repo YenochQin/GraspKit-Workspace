@@ -13,6 +13,7 @@
 !/nist_data
 !/doc/
 /doc/*
+!/doc/csf_descriptor_v2_ml_design.md
 !/doc/rmcdhf_test/
 /doc/rmcdhf_test/*
 !/doc/rmcdhf_test/cal-report-analysis-cal-report-analysis-ni-ca-like-2026-08-19.md
