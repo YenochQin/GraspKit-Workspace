@@ -19,7 +19,7 @@ source_files:
 > no-varied versus one-sided-optimized observation. It establishes the energy
 > and radial contrast, but does not by itself identify the unique cause. The
 > controlled B1/B2/B3 conclusion is maintained in
-> [the evidence summary](./rmcdhf90_mpi_轨道优化测试结果.md).
+> [the evidence summary](./rmcdhf90_mpi_orbital_optimization_test_results_en.md).
 
 ## Scope
 

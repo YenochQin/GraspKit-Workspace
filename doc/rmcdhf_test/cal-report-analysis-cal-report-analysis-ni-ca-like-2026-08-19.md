@@ -18,7 +18,7 @@ source_files:
 > **Evidence scope:** this retained report records the original NV versus
 > optimized LBL observation. Its orbital-balance interpretation is a supported
 > hypothesis, not a unique causal proof; current controlled conclusions are in
-> [the evidence summary](./rmcdhf90_mpi_轨道优化测试结果.md).
+> [the evidence summary](./rmcdhf90_mpi_orbital_optimization_test_results_en.md).
 
 ## Scope
 
