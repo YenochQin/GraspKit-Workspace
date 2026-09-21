@@ -2,8 +2,9 @@
 
 日期：2026-09-21
 
-状态：工程方案；Phase 1–3 已于 2026-09-21 实施并通过 Rust 全套测试，Phase 0 和 Phase
-4–5 仍待实施。流式生成、磁盘去重目前仍是 crate 内路径，尚未替换 CLI 的多输出编排。本文取代：
+状态：工程方案；Phase 1–4 的核心路径已于 2026-09-21 实施并通过 Rust 与 Python 回归测试，
+Phase 0 和 Phase 5 仍待实施。`csfsgenerate --config` 在要求 descriptor 时默认使用 disk
+路径，也可显式选择 memory 或 disk。本文取代：
 
 - `doc/csf_descriptor_v2_ml_design.md` §9 中“生成和去重期间不得写盘”的旧约束；
 - `doc/csf_generation_streaming_design.md` 的“直接同时写出 CSF 与描述符、无需最终 CSF
@@ -631,7 +632,7 @@ Phase 4 的 `generate_outputs` 输出事务统一接线。
 覆盖了强制摘要碰撞下 seniority 差异、缺失值与显式零的保留，以及递归分桶后跨 segment 的首行
 顺序保持；`cargo test` 全部通过。CLI 接线和最终 CSF 恢复仍由 Phase 4 负责。
 
-### Phase 4：流式恢复和输出事务
+### Phase 4：流式恢复和输出事务（核心路径已实施，待提交）
 
 1. 把 `py_restore_csfs_from_descriptors` 改为 RecordBatch 流式解码。
 2. 抽取单记录规范写出接口，不构建完整 `CompleteCsfFile`。
@@ -640,6 +641,22 @@ Phase 4 的 `generate_outputs` 输出事务统一接线。
 5. 发布可选 CSF 三行 Parquet。
 
 门禁：端到端结果与 memory 路径逐字节一致；恢复峰值内存不随 N 线性增长。
+
+实施记录：`restore_v2_descriptor_parquet_stream` 已在 `csfs_descriptor.rs` 中逐个
+RecordBatch 读取 V2 Parquet，复用一行整数、占据和耦合缓冲区，并调用
+`CompleteCsfFile::format_record_parts` 后直接写出规范三行 CSF；它不再构建完整的行向量或
+`CompleteCsfFile`。完整恢复会验证 V2 schema、非空列、header hash（若 descriptor 携带）、
+`block_lengths` 和行数，并使用原子临时文件发布。保留旧的全内存子集分支以维持无序索引 API
+兼容性，后续将按本方案的磁盘索引策略替换。
+
+`streaming.rs` 新增从 transcript 到暂存 CSF、CSF Parquet、V2 descriptor 和 header 的 disk
+深模块入口；它顺序执行 range 生成、精确去重和 descriptor 发布，然后逐行解码 V2 并一次格式化，
+同时写出 CSF 文本和 `idx/line1/line2/line3` Parquet。Python CLI 在私有暂存目录调用该入口，
+不再把已写出的 CSF 文本重新读取并转为 Parquet；全部文件就绪后才以独占创建发布 CSF、CSF
+Parquet、header、descriptor 及 sidecar。`csfsgenerate --config` 在
+`generate_descriptors=true` 且未指定 storage 时选择 disk；`--generation-storage` 与
+`--scratch-dir` 可覆盖它。新增端到端测试比较 disk 与 memory 的 CSF 字节，并验证 TOML 配置
+生成的是 V2 descriptor。
 
 ### Phase 5：占据组态和恢复能力增强
 
